@@ -6,34 +6,49 @@ const apiKey = process.env.MISTRAL_API_KEY;
 const client = new Mistral({ apiKey: apiKey });
 
 export async function POST(req: Request) {
-  const { text } = await req.json();
-
   try {
+    const { text } = await req.json();
+
+    if (!text) {
+      return NextResponse.json(
+        { error: 'Le texte est requis' },
+        { status: 400 }
+      );
+    }
+
     // Envoi de la requête à l'API Mistral
     const chatResponse = await client.chat.complete({
       model: 'mistral-large-latest',
       messages: [{ role: 'user', content: text }],
     });
 
-
-    if (chatResponse.choices && chatResponse.choices.length > 0) {
-      console.log('Chat:', chatResponse.choices[0].message.content);
-    } else {
-      console.error('Aucune réponse de choix disponible.');
+    if (!chatResponse.choices || chatResponse.choices.length === 0) {
+      return NextResponse.json(
+        { error: 'Aucune réponse générée' },
+        { status: 500 }
+      );
     }
-    
-    const summary = chatResponse.choices[0].message.content;
 
-    // Extraction des mots-clés (exemple simple ici, peut être amélioré)
-    const keywords = extractKeywords(summary);
+    const messageContent = chatResponse.choices[0].message?.content;
+    if (!messageContent) {
+      return NextResponse.json(
+        { error: 'Réponse invalide' },
+        { status: 500 }
+      );
+    }
 
-    // Limiter les mots-clés à 5
+    const content = Array.isArray(messageContent) 
+      ? messageContent.map(chunk => chunk.toString()).join('')
+      : messageContent;
+
+    // Extraction des mots-clés
+    const keywords = extractKeywords(content);
     const limitedKeywords = keywords.slice(0, 5);
 
     // Générer le résumé de 3 paragraphes
-    const paragraphs = generateSummary(summary, 3);
+    const paragraphs = generateSummary(content, 3);
 
-    // Retour des résultats avec les sources (en exemple, tu peux ajouter des liens réels selon ton besoin)
+    // Retour des résultats avec les sources
     const sources = ["Source 1: Blog", "Source 2: Presse", "Source 3: Recherche académique"];
 
     return NextResponse.json({
@@ -42,7 +57,11 @@ export async function POST(req: Request) {
       sources: sources,
     });
   } catch (error) {
-    return NextResponse.error();
+    console.error('Erreur:', error);
+    return NextResponse.json(
+      { error: 'Erreur interne du serveur' },
+      { status: 500 }
+    );
   }
 }
 
