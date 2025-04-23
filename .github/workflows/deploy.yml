@@ -12,10 +12,10 @@ jobs:
   deploy:
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v3
+      - uses: actions/checkout@v4
 
       - name: Setup Node.js
-        uses: actions/setup-node@v3
+        uses: actions/setup-node@v4
         with:
           node-version: '18'
           cache: 'npm'
@@ -28,12 +28,16 @@ jobs:
         env:
           MISTRAL_API_KEY: ${{ secrets.MISTRAL_API_KEY }}
 
-      - name: Deploy to Scaleway
-        uses: scaleway/containers-deploy-action@v1.1.0
+      - name: Login to Scaleway Container Registry
+        uses: docker/login-action@v3
         with:
-          project-id: ${{ env.SCALEWAY_PROJECT_ID }}
-          secret-key: ${{ secrets.SCALEWAY_SECRET_KEY }}
-          access-key: ${{ secrets.SCALEWAY_ACCESS_KEY }}
-          image-name: second-brain
-          tag: ${{ github.sha }}
-          region: fr-par 
+          registry: rg.fr-par.scw.cloud
+          username: nologin
+          password: ${{ secrets.SCALEWAY_SECRET_KEY }}
+
+      - name: Build and push Docker image
+        uses: docker/build-push-action@v5
+        with:
+          context: .
+          push: true
+          tags: rg.fr-par.scw.cloud/${{ env.SCALEWAY_PROJECT_ID }}/second-brain:latest 
