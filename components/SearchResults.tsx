@@ -1,3 +1,13 @@
+interface Source {
+  url: string;
+  title: string;
+}
+
+interface Image {
+  url: string;
+  description: string;
+}
+
 interface SearchResult {
   title: string;
   summary: string;
@@ -8,8 +18,8 @@ interface SearchResult {
     paragraphs: string[];
     conclusion: string;
   };
-  sources: string[];
-  images: { url: string; description: string }[];
+  sources: Source[];
+  images: Image[];
   keywords: string[];
 }
 
@@ -30,6 +40,18 @@ export function SearchResults({ result }: SearchResultsProps) {
       return false;
     }
   };
+
+  const paragraphTitles = [
+    'Approche Philosophique',
+    'Analyse Critique',
+    'Perspective Contemporaine'
+  ];
+
+  const paragraphColors = [
+    'bg-green-50 text-green-700',
+    'bg-red-50 text-red-700',
+    'bg-yellow-50 text-yellow-700'
+  ];
 
   return (
     <div className="space-y-8 bg-white p-6 rounded-lg shadow-lg">
@@ -57,27 +79,19 @@ export function SearchResults({ result }: SearchResultsProps) {
         <div className="space-y-6">
           <div className="bg-white p-4 rounded-lg shadow-sm">
             <h3 className="text-xl font-semibold mb-3 text-gray-700">Introduction</h3>
-            <p className="text-gray-700 leading-relaxed">{result.exposition.introduction}</p>
+            <p className="text-gray-700 leading-relaxed whitespace-pre-line">{result.exposition.introduction}</p>
           </div>
 
-          <div className="bg-green-50 p-4 rounded-lg shadow-sm">
-            <h3 className="text-xl font-semibold mb-3 text-green-700">Approche Philosophique</h3>
-            <p className="text-gray-700 leading-relaxed">{result.exposition.paragraphs[0]}</p>
-          </div>
-
-          <div className="bg-red-50 p-4 rounded-lg shadow-sm">
-            <h3 className="text-xl font-semibold mb-3 text-red-700">Analyse Critique</h3>
-            <p className="text-gray-700 leading-relaxed">{result.exposition.paragraphs[1]}</p>
-          </div>
-
-          <div className="bg-yellow-50 p-4 rounded-lg shadow-sm">
-            <h3 className="text-xl font-semibold mb-3 text-yellow-700">Perspective Contemporaine</h3>
-            <p className="text-gray-700 leading-relaxed">{result.exposition.paragraphs[2]}</p>
-          </div>
+          {result.exposition.paragraphs.map((paragraph, index) => (
+            <div key={index} className={`p-4 rounded-lg shadow-sm ${paragraphColors[index]}`}>
+              <h3 className="text-xl font-semibold mb-3">{paragraphTitles[index]}</h3>
+              <p className="text-gray-700 leading-relaxed whitespace-pre-line">{paragraph}</p>
+            </div>
+          ))}
 
           <div className="bg-white p-4 rounded-lg shadow-sm">
             <h3 className="text-xl font-semibold mb-3 text-gray-700">Conclusion</h3>
-            <p className="text-gray-700 leading-relaxed">{result.exposition.conclusion}</p>
+            <p className="text-gray-700 leading-relaxed whitespace-pre-line">{result.exposition.conclusion}</p>
           </div>
         </div>
       </section>
@@ -87,16 +101,24 @@ export function SearchResults({ result }: SearchResultsProps) {
         <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
           {result.images.map((image, index) => (
             <div key={index} className="bg-white p-4 rounded-lg shadow-sm">
-              <img 
-                src={image.url} 
-                alt={image.description}
-                className="w-full h-48 object-cover rounded-lg mb-2"
-                onError={(e) => {
-                  const target = e.target as HTMLImageElement;
-                  target.src = 'https://via.placeholder.com/300x200?text=Image+non+disponible';
-                }}
-              />
-              <p className="text-sm text-gray-600 text-center">{image.description}</p>
+              {image.url ? (
+                <>
+                  <img 
+                    src={image.url} 
+                    alt={image.description}
+                    className="w-full h-48 object-cover rounded-lg mb-2"
+                    onError={(e) => {
+                      const target = e.target as HTMLImageElement;
+                      target.src = 'https://via.placeholder.com/300x200?text=Image+non+disponible';
+                    }}
+                  />
+                  <p className="text-sm text-gray-600 text-center">{image.description}</p>
+                </>
+              ) : (
+                <div className="w-full h-48 bg-gray-200 rounded-lg flex items-center justify-center">
+                  <p className="text-gray-500">Image non disponible</p>
+                </div>
+              )}
             </div>
           ))}
         </div>
@@ -107,9 +129,9 @@ export function SearchResults({ result }: SearchResultsProps) {
         <ul className="list-disc pl-6 space-y-2">
           {result.sources.map((source, index) => (
             <li key={index} className="text-gray-600 hover:bg-gray-100 p-2 rounded transition-colors">
-              {isUrl(source) ? (
+              {source.url ? (
                 <a 
-                  href={source} 
+                  href={source.url} 
                   target="_blank" 
                   rel="noopener noreferrer"
                   className="text-blue-600 hover:text-blue-800 hover:underline flex items-center gap-2"
@@ -117,10 +139,10 @@ export function SearchResults({ result }: SearchResultsProps) {
                   <svg xmlns="http://www.w3.org/2000/svg" className="h-4 w-4" fill="none" viewBox="0 0 24 24" stroke="currentColor">
                     <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M10 6H6a2 2 0 00-2 2v10a2 2 0 002 2h10a2 2 0 002-2v-4M14 4h6m0 0v6m0-6L10 14" />
                   </svg>
-                  {source}
+                  {source.title || source.url}
                 </a>
               ) : (
-                source
+                <span>Source non disponible</span>
               )}
             </li>
           ))}

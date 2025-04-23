@@ -1,9 +1,33 @@
 import { NextResponse } from 'next/server';
 
+interface SearchResult {
+  title: string;
+  summary: string;
+  historicalContext: string;
+  anecdote: string;
+  exposition: {
+    introduction: string;
+    paragraphs: string[];
+    conclusion: string;
+  };
+  sources: Array<{ url: string; title: string }>;
+  images: Array<{ url: string; description: string }>;
+  keywords: string[];
+}
+
+const CATEGORIES = {
+  INTRO: 'introduction',
+  CONTEXT: 'context',
+  EXPOSITION: 'exposition',
+  CONCLUSION: 'conclusion'
+} as const;
+
+type Category = typeof CATEGORIES[keyof typeof CATEGORIES];
+
 export async function POST(request: Request) {
   try {
-    const { query } = await request.json();
-    console.log('Requête reçue:', query);
+    const { query, category } = await request.json();
+    console.log('Requête reçue:', { query, category });
 
     if (!query || typeof query !== 'string' || query.trim().length === 0) {
       return NextResponse.json(
@@ -12,55 +36,127 @@ export async function POST(request: Request) {
       );
     }
 
-    const prompt = `
-      Je vais te poser une question et je veux que tu me répondes en français et dans un format spécifique.
-      IMPORTANT: Toutes tes réponses doivent être en français et concises.
+    if (!category || !Object.values(CATEGORIES).includes(category)) {
+      return NextResponse.json(
+        { error: 'Catégorie invalide ou manquante' },
+        { status: 400 }
+      );
+    }
 
-      Question: ${query}
+    const prompts = {
+      [CATEGORIES.INTRO]: `
+        Je vais te poser une question et je veux que tu me répondes en français pour la partie introduction.
+        
+        Question: ${query}
 
-      Réponds-moi en suivant exactement ce format:
+        FORMAT EXACT À SUIVRE:
 
-      TITRE:
-      [Un titre accrocheur en 5-10 mots]
+        TITRE:
+        [DEBUT]
+        Un titre unique et accrocheur en 5-10 mots maximum
+        [FIN]
 
-      RÉSUMÉ:
-      [Un résumé concis en 2-3 lignes]
+        RÉSUMÉ:
+        [DEBUT]
+        Exactement 3 lignes de résumé.
+        Pas plus, pas moins.
+        Le résumé doit être concis et informatif.
+        [FIN]
+      `,
+      [CATEGORIES.CONTEXT]: `
+        Je vais te poser une question et je veux que tu me répondes en français pour le contexte historique.
+        
+        Question: ${query}
 
-      REPÈRES HISTORIQUES:
-      [3-4 lignes maximum]
+        FORMAT EXACT À SUIVRE:
 
-      ANECDOTE:
-      [2-3 lignes maximum]
+        REPÈRES HISTORIQUES:
+        [DEBUT]
+        Exactement 3 dates ou périodes clés.
+        Chaque date avec un fait historique précis.
+        Maximum 4 lignes au total.
+        [FIN]
 
-      EXPOSÉ:
-      Introduction:
-      [3-4 lignes]
+        ANECDOTE:
+        [DEBUT]
+        Une seule anecdote historique intéressante.
+        Maximum 3 lignes.
+        [FIN]
+      `,
+      [CATEGORIES.EXPOSITION]: `
+        Je vais te poser une question et je veux que tu me répondes en français pour l'exposé principal.
+        
+        Question: ${query}
 
-      Paragraphes:
-      [Paragraphe 1: Approche philosophique (10 lignes)]
-      [Paragraphe 2: Analyse critique (10 lignes)]
-      [Paragraphe 3: Perspective contemporaine (10 lignes)]
+        FORMAT EXACT À SUIVRE:
 
-      Conclusion:
-      [3-4 lignes]
+        Introduction:
+        [DEBUT]
+        Présentation du sujet en 3 lignes maximum.
+        Annonce claire du plan.
+        Pas de formules de politesse.
+        [FIN]
 
-      SOURCES:
-      Fournis 3 sources pertinentes avec des URLs.
-      1. [URL] - [Titre court]
-      2. [URL] - [Titre court]
-      3. [URL] - [Titre court]
+        Paragraphe 1 - Approche Philosophique:
+        [DEBUT]
+        Développement philosophique en 8-10 lignes.
+        Arguments clairs et structurés.
+        Pas de répétitions.
+        [FIN]
 
-      IMAGES:
-      Fournis 3 URLs d'images pertinentes.
-      1. [URL] - [Description courte]
-      2. [URL] - [Description courte]
-      3. [URL] - [Description courte]
+        Paragraphe 2 - Analyse Critique:
+        [DEBUT]
+        Analyse critique en 8-10 lignes.
+        Points positifs et négatifs.
+        Arguments différents du premier paragraphe.
+        [FIN]
 
-      MOTS-CLÉS:
-      [3 mots-clés séparés par des virgules]
-    `;
+        Paragraphe 3 - Perspective Contemporaine:
+        [DEBUT]
+        Vision moderne en 8-10 lignes.
+        Enjeux actuels.
+        Tendances futures.
+        [FIN]
+      `,
+      [CATEGORIES.CONCLUSION]: `
+        Je vais te poser une question et je veux que tu me répondes en français pour la conclusion.
+        IMPORTANT: Pour les images, utilise UNIQUEMENT des URLs d'images réelles et existantes, pas de placeholders.
+        
+        Question: ${query}
 
+        FORMAT EXACT À SUIVRE:
+
+        Conclusion:
+        [DEBUT]
+        Synthèse en 3 lignes maximum.
+        Points clés uniquement.
+        Pas de nouvelles idées.
+        [FIN]
+
+        SOURCES:
+        [DEBUT]
+        1. https://source1.com - Titre précis de la source 1 (25 caractères max)
+        2. https://source2.com - Titre précis de la source 2 (25 caractères max)
+        3. https://source3.com - Titre précis de la source 3 (25 caractères max)
+        [FIN]
+
+        IMAGES:
+        [DEBUT]
+        1. https://upload.wikimedia.org/wikipedia/commons/thumb/... - Description courte image 1 (15 mots max)
+        2. https://commons.wikimedia.org/wiki/File/... - Description courte image 2 (15 mots max)
+        3. https://images.pexels.com/photos/... - Description courte image 3 (15 mots max)
+        [FIN]
+
+        MOTS-CLÉS:
+        [DEBUT]
+        mot-clé1, mot-clé2, mot-clé3 (chaque mot-clé: 15 caractères maximum)
+        [FIN]
+      `
+    };
+
+    const selectedPrompt = prompts[category as Category];
     console.log('Envoi de la requête à Mistral AI...');
+    
     const response = await fetch('https://api.mistral.ai/v1/chat/completions', {
       method: 'POST',
       headers: {
@@ -69,9 +165,9 @@ export async function POST(request: Request) {
       },
       body: JSON.stringify({
         model: 'mistral-large-latest',
-        messages: [{ role: 'user', content: prompt }],
+        messages: [{ role: 'user', content: selectedPrompt }],
         temperature: 0.7,
-        max_tokens: 1500,
+        max_tokens: 1000,
         top_p: 0.9,
         frequency_penalty: 0.5,
         presence_penalty: 0.5
@@ -97,76 +193,115 @@ export async function POST(request: Request) {
     const content = data.choices[0].message.content;
     console.log('Contenu de la réponse:', content);
 
-    // Extraction des données avec une meilleure gestion des erreurs
+    // Fonction d'extraction améliorée
     const extractSection = (content: string, sectionName: string) => {
-      const regex = new RegExp(`${sectionName}:\\s*([\\s\\S]*?)(?=\\n\\n[A-ZÀ-ÿ]+:|$)`, 'i');
+      const regex = new RegExp(`${sectionName}:(?:[^\\[]*\\[DEBUT\\]\\s*)([\\s\\S]*?)\\s*\\[FIN\\]`, 'i');
       const match = content.match(regex);
       return match ? match[1].trim() : '';
     };
 
-    const title = extractSection(content, 'TITRE');
-    const summary = extractSection(content, 'RÉSUMÉ');
-    const historicalContext = extractSection(content, 'REPÈRES HISTORIQUES');
-    const anecdote = extractSection(content, 'ANECDOTE');
-    
-    // Extraction de l'exposé
-    const expositionText = extractSection(content, 'EXPOSÉ');
-    const introduction = extractSection(expositionText, 'Introduction');
-    const paragraphsText = extractSection(expositionText, 'Paragraphes');
-    const conclusion = extractSection(expositionText, 'Conclusion');
-
-    // Extraction des paragraphes
-    const paragraphs = paragraphsText
-      .split('\n')
-      .map(line => line.trim())
-      .filter(line => line.startsWith('[') && line.endsWith(']'))
-      .map(line => line.slice(1, -1).trim());
-
-    // Extraction des sources
-    const sourcesText = extractSection(content, 'SOURCES');
-    const sources = sourcesText
-      .split('\n')
-      .map(line => line.trim())
-      .filter(line => line.match(/^\d+\./))
-      .map(line => {
-        const match = line.match(/^\d+\.\s*(https?:\/\/[^\s]+)\s*-\s*(.*)$/);
-        return match ? match[1] : line.replace(/^\d+\.\s*/, '');
-      });
-
-    // Extraction des images
-    const imagesText = extractSection(content, 'IMAGES');
-    const images = imagesText
-      .split('\n')
-      .map(line => line.trim())
-      .filter(line => line.match(/^\d+\./))
-      .map(line => {
-        const match = line.match(/^\d+\.\s*(https?:\/\/[^\s]+)\s*-\s*(.*)$/);
-        return match ? { url: match[1], description: match[2] } : { url: line.replace(/^\d+\.\s*/, ''), description: '' };
-      });
-
-    // Extraction des mots-clés
-    const keywordsText = extractSection(content, 'MOTS-CLÉS');
-    const keywords = keywordsText
-      .split(',')
-      .map(keyword => keyword.trim())
-      .filter(keyword => keyword.length > 0);
-
-    const result = {
-      title,
-      summary,
-      historicalContext,
-      anecdote,
-      exposition: {
-        introduction,
-        paragraphs,
-        conclusion
-      },
-      sources,
-      images,
-      keywords
+    // Extraction des paragraphes avec une approche plus précise
+    const extractParagraphs = (text: string) => {
+      const paragraphsContent = extractSection(text, 'Paragraphe 1 - Approche Philosophique') + '\n\n' +
+                               extractSection(text, 'Paragraphe 2 - Analyse Critique') + '\n\n' +
+                               extractSection(text, 'Paragraphe 3 - Perspective Contemporaine');
+      
+      return paragraphsContent
+        .split('\n\n')
+        .map(p => p.trim())
+        .filter(p => p.length > 0);
     };
-    console.log('Résultat final:', result);
 
+    // Extraction des images avec une approche plus précise
+    const extractImages = (content: string) => {
+      const imagesSection = extractSection(content, 'IMAGES');
+      return imagesSection
+        .split('\n')
+        .map(line => line.trim())
+        .filter(line => line.match(/^\d+\./))
+        .map(line => {
+          const match = line.match(/^\d+\.\s*(https?:\/\/[^\s]+)\s*-\s*(.*)$/);
+          return match ? { 
+            url: match[1].trim(),
+            description: match[2].trim()
+          } : null;
+        })
+        .filter((image): image is { url: string; description: string } => image !== null);
+    };
+
+    let result: Partial<SearchResult> = {};
+
+    switch (category) {
+      case CATEGORIES.INTRO:
+        result = {
+          title: extractSection(content, 'TITRE'),
+          summary: extractSection(content, 'RÉSUMÉ')
+        };
+        break;
+
+      case CATEGORIES.CONTEXT:
+        result = {
+          historicalContext: extractSection(content, 'REPÈRES HISTORIQUES'),
+          anecdote: extractSection(content, 'ANECDOTE')
+        };
+        break;
+
+      case CATEGORIES.EXPOSITION:
+        const paragraphs = extractParagraphs(content);
+        result = {
+          exposition: {
+            introduction: extractSection(content, 'Introduction'),
+            paragraphs: paragraphs.length === 3 ? paragraphs : ['', '', ''],
+            conclusion: ''
+          }
+        };
+        break;
+
+      case CATEGORIES.CONCLUSION:
+        result = {
+          exposition: {
+            introduction: '',
+            paragraphs: [],
+            conclusion: extractSection(content, 'Conclusion')
+          },
+          sources: extractSection(content, 'SOURCES')
+            .split('\n')
+            .map(line => line.trim())
+            .filter(line => line.match(/^\d+\./))
+            .map(line => {
+              const match = line.match(/^\d+\.\s*(https?:\/\/[^\s]+)\s*-\s*(.*)$/);
+              return match ? { url: match[1].trim(), title: match[2].trim() } : null;
+            })
+            .filter((source): source is { url: string; title: string } => source !== null),
+          images: extractImages(content),
+          keywords: extractSection(content, 'MOTS-CLÉS')
+            .split(',')
+            .map(keyword => keyword.trim())
+            .filter(keyword => keyword.length > 0)
+        };
+
+        // Ensure we have at least 3 items for sources, images, and keywords
+        if (result.sources && result.sources.length < 3) {
+          result.sources = result.sources.concat(
+            Array(3 - result.sources.length).fill({ url: '', title: '' })
+          );
+        }
+
+        if (result.images && result.images.length < 3) {
+          result.images = result.images.concat(
+            Array(3 - result.images.length).fill({ url: '', description: '' })
+          );
+        }
+
+        if (result.keywords && result.keywords.length < 3) {
+          result.keywords = result.keywords.concat(
+            Array(3 - result.keywords.length).fill('')
+          );
+        }
+        break;
+    }
+
+    console.log('Résultat final:', result);
     return NextResponse.json(result);
   } catch (error) {
     console.error('Error:', error);
