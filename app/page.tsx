@@ -1,8 +1,8 @@
 "use client";
 
+import { SearchForm } from '@/components/SearchForm';
+import { SearchResults } from '@/components/SearchResults';
 import { useState } from 'react';
-import SearchForm from './components/SearchForm';
-import SearchResults from './components/SearchResults';
 
 interface SearchResult {
   title?: string;
@@ -90,12 +90,17 @@ export default function Home() {
   };
 
   return (
-    <main className="min-h-screen bg-gray-50 py-8 px-4">
-      <div className="max-w-4xl mx-auto">
-        <h1 className="text-4xl font-bold text-center text-gray-900 mb-8">
-          Second Brain
+    <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-12">
+      <div className="text-center mb-8">
+        <h1 className="text-4xl font-bold text-gray-900 mb-6">
+          Bienvenue sur Second Brain
         </h1>
-        
+        <p className="text-xl text-gray-600">
+          Votre organisateur intelligent de pensées
+        </p>
+      </div>
+
+      <div className="max-w-4xl mx-auto">
         <SearchForm onSearch={handleSearch} isLoading={isLoading} />
         
         {isLoading && (
@@ -132,6 +137,6 @@ export default function Home() {
           currentCategory={currentCategory}
         />
       </div>
-    </main>
+    </div>
   );
 }
