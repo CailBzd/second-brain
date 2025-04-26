@@ -102,6 +102,92 @@ export function SearchResults({ result, isLoading, currentCategory }: SearchResu
     'bg-yellow-50 text-yellow-700'
   ];
 
+  // Fonction pour traiter le texte des repères historiques
+  const parseHistoricalContext = (text: string) => {
+    if (!text) return [];
+    
+    // Chercher spécifiquement les patterns "1. ", "2. " et "3. "
+    const points = [];
+    const patterns = [/1\.\s+/, /2\.\s+/, /3\.\s+/];
+    
+    // Trouver les positions de chaque marqueur
+    const positions = patterns.map(pattern => {
+      const match = text.match(pattern);
+      return match ? match.index : -1;
+    }).filter(pos => pos !== -1) as number[];
+    
+    // Si on trouve au moins un marqueur
+    if (positions.length > 0) {
+      positions.sort((a, b) => a - b);
+      
+      // Extraire chaque section
+      for (let i = 0; i < positions.length; i++) {
+        const start = positions[i];
+        const end = i < positions.length - 1 ? positions[i + 1] : text.length;
+        const section = text.substring(start, end).trim();
+        points.push(section);
+      }
+      
+      // S'il manque des points, chercher le contenu avant le premier marqueur trouvé
+      if (points.length < 3 && positions[0] > 0) {
+        const beforeText = text.substring(0, positions[0]).trim();
+        if (beforeText && !beforeText.match(/^\d+\.\s+/)) {
+          points.unshift("1. " + beforeText);
+        }
+      }
+      
+      return points;
+    }
+    
+    // Si on ne trouve pas les marqueurs spécifiques, essayer une recherche plus générale
+    const generalPattern = /\b(\d+)\.\s+/g;
+    let match;
+    const matches: Array<{index: number, number: string}> = [];
+    while ((match = generalPattern.exec(text)) !== null) {
+      matches.push({ index: match.index, number: match[1] });
+    }
+    
+    if (matches.length > 0) {
+      matches.sort((a, b) => a.index - b.index);
+      
+      for (let i = 0; i < matches.length; i++) {
+        const start = matches[i].index;
+        const end = i < matches.length - 1 ? matches[i + 1].index : text.length;
+        const section = text.substring(start, end).trim();
+        points.push(section);
+      }
+      
+      return points;
+    }
+    
+    // Dernier recours : diviser le texte en 3 sections
+    if (text.length > 30) {
+      // Essayer de trouver des phrases complètes
+      const sentences = text.split(/(?<=\.)\s+/);
+      
+      if (sentences.length >= 3) {
+        // Regrouper les phrases en 3 groupes approximativement égaux
+        const third = Math.ceil(sentences.length / 3);
+        return [
+          "1. " + sentences.slice(0, third).join(' '),
+          "2. " + sentences.slice(third, third * 2).join(' '),
+          "3. " + sentences.slice(third * 2).join(' ')
+        ];
+      } else {
+        // Si pas assez de phrases, diviser par caractères
+        const thirdLength = Math.floor(text.length / 3);
+        return [
+          "1. " + text.slice(0, thirdLength).trim(),
+          "2. " + text.slice(thirdLength, thirdLength * 2).trim(),
+          "3. " + text.slice(thirdLength * 2).trim()
+        ];
+      }
+    }
+    
+    // Si tout échoue, retourner le texte entier comme un seul point
+    return ["1. " + text];
+  };
+
   // Si aucun résultat et pas de chargement, ne rien afficher
   if (!result) return null;
 
@@ -133,7 +219,77 @@ export function SearchResults({ result, isLoading, currentCategory }: SearchResu
       {result.historicalContext ? (
         <section className="bg-purple-50 p-4 rounded-lg animate-fadeIn">
           <h2 className="text-2xl font-bold mb-4 text-purple-800">Repères Historiques</h2>
-          <p className="text-gray-700 leading-relaxed">{result.historicalContext}</p>
+          
+          <div className="space-y-3">
+            {parseHistoricalContext(result.historicalContext).map((point, index) => {
+              // Détecter le numéro en début de chaîne
+              const numberMatch = point.match(/^(\d+)\./);
+              const pointNumber = numberMatch ? numberMatch[1] : String(index + 1);
+              
+              // Nettoyer le texte (enlever astérisques et le numéro initial)
+              const cleanPoint = point.replace(/\*\*/g, '').replace(/^\d+\.\s*/, '');
+              
+              // Couleurs pour chaque point
+              const colors = [
+                "bg-purple-100 border-purple-300",
+                "bg-indigo-100 border-indigo-300",
+                "bg-pink-100 border-pink-300"
+              ];
+              
+              // Essayer de diviser en "période : contenu" ou similaire
+              let title = '';
+              let content = cleanPoint;
+              
+              const separators = [' : ', ': ', ' - ', ' – '];
+              for (const separator of separators) {
+                if (cleanPoint.includes(separator)) {
+                  const [titlePart, ...contentParts] = cleanPoint.split(separator);
+                  
+                  // Vérifier si la première partie ressemble à une période (contient des chiffres)
+                  if (/\d/.test(titlePart)) {
+                    title = titlePart.trim();
+                    content = contentParts.join(separator).trim();
+                    break;
+                  }
+                }
+              }
+              
+              // Si pas de titre trouvé et si le contenu est long, utiliser la première phrase comme titre
+              if (!title && content.length > 50) {
+                const sentenceEnd = content.indexOf('. ');
+                if (sentenceEnd > 10 && sentenceEnd < 100) {
+                  title = content.substring(0, sentenceEnd + 1).trim();
+                  content = content.substring(sentenceEnd + 1).trim();
+                }
+              }
+              
+              return (
+                <div 
+                  key={index} 
+                  className={`${colors[index % 3]} border-l-4 p-4 rounded-md shadow-sm animate-fadeIn hover:shadow-md transition-all`}
+                  style={{animationDelay: `${index * 0.15}s`}}
+                >
+                  <div className="flex items-start">
+                    <div className="flex-shrink-0 mr-3">
+                      <div className="h-8 w-8 rounded-full bg-white shadow-inner flex items-center justify-center text-purple-800 font-bold">
+                        {pointNumber}
+                      </div>
+                    </div>
+                    <div className="flex-1">
+                      {title ? (
+                        <>
+                          <div className="font-bold text-purple-900 mb-1">{title}</div>
+                          <div className="text-gray-800">{content}</div>
+                        </>
+                      ) : (
+                        <div className="text-gray-800">{content}</div>
+                      )}
+                    </div>
+                  </div>
+                </div>
+              );
+            })}
+          </div>
         </section>
       ) : isLoading && (
         <LoadingSection title="Repères Historiques" />

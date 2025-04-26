@@ -6,16 +6,17 @@ import { useState } from "react"
 interface SearchFormProps {
   onSearch: (query: string) => Promise<void>;
   isLoading: boolean;
+  minimized?: boolean;
 }
 
-export function SearchForm({ onSearch, isLoading }: SearchFormProps) {
+export function SearchForm({ onSearch, isLoading, minimized = false }: SearchFormProps) {
   const [query, setQuery] = useState("")
   const [error, setError] = useState<string | null>(null)
 
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault()
-    if (query.length < 30) {
-      setError("Veuillez fournir au moins 30 caractères pour une recherche pertinente")
+    if (query.length < 20) {
+      setError("Veuillez fournir au moins 20 caractères pour une recherche pertinente")
       return
     }
     setError(null)
@@ -24,15 +25,17 @@ export function SearchForm({ onSearch, isLoading }: SearchFormProps) {
 
   return (
     <div className="space-y-4">
-      <p className="text-gray-600 text-center max-w-2xl mx-auto">
-        Pour une recherche organisée et pertinente, veuillez fournir un contexte détaillé 
-        (minimum 30 caractères). Plus votre question sera précise, plus les résultats seront pertinents.
-      </p>
+      {!minimized && (
+        <p className="text-gray-600 text-center max-w-2xl mx-auto">
+          Pour une recherche organisée et pertinente, veuillez fournir un contexte détaillé 
+          (minimum 20 caractères). Plus votre question sera précise, plus les résultats seront pertinents.
+        </p>
+      )}
 
       <form onSubmit={handleSubmit} className="flex w-full max-w-2xl mx-auto items-center space-x-2">
         <Input
           type="search"
-          placeholder="Ex: Je cherche à comprendre l'impact de la révolution industrielle sur l'organisation du travail au 19ème siècle..."
+          placeholder={minimized ? "Nouvelle recherche..." : "Ex: Je cherche à comprendre l'impact de la révolution industrielle sur l'organisation du travail au 19ème siècle..."}
           className="flex-1"
           value={query}
           onChange={(e) => {

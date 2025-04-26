@@ -28,6 +28,18 @@ const CATEGORIES = {
 
 type Category = typeof CATEGORIES[keyof typeof CATEGORIES];
 
+// Liste des champs à récupérer
+const FIELDS = [
+  'title',
+  'summary',
+  'historicalContext',
+  'anecdote',
+  'exposition',
+  'sources',
+  'images',
+  'keywords'
+];
+
 export default function Home() {
   const [isLoading, setIsLoading] = useState(false);
   const [currentCategory, setCurrentCategory] = useState<Category>(CATEGORIES.INTRO);
@@ -35,121 +47,98 @@ export default function Home() {
   const [error, setError] = useState<string | null>(null);
   const [progress, setProgress] = useState<number>(0);
   const [query, setQuery] = useState<string>('');
-  const eventSourceRef = useRef<EventSource | null>(null);
   const [loadedFields, setLoadedFields] = useState<Record<string, boolean>>({});
+  const [hasSearched, setHasSearched] = useState<boolean>(false);
+  const abortControllersRef = useRef<Record<string, AbortController>>({});
 
-  const processCategory = async (query: string, category: Category): Promise<boolean> => {
-    setCurrentCategory(category);
-    
+  // Fonction pour récupérer un champ spécifique
+  const fetchField = async (query: string, field: string) => {
     try {
-      const response = await fetch('/api/search', {
-        method: 'POST',
-        headers: {
-          'Content-Type': 'application/json',
-        },
-        body: JSON.stringify({ query, category }),
+      // Créer un nouvel AbortController pour cette requête
+      abortControllersRef.current[field] = new AbortController();
+      
+      console.log(`Récupération du champ ${field}...`);
+      
+      const response = await fetch(`/api/search?query=${encodeURIComponent(query)}&field=${field}`, {
+        signal: abortControllersRef.current[field].signal
       });
-
+      
       if (!response.ok) {
         const errorData = await response.json();
-        throw new Error(errorData.error || 'Une erreur est survenue');
+        throw new Error(errorData.error || `Erreur lors de la récupération du champ ${field}`);
       }
-
+      
       const data = await response.json();
-      setSearchResult(prevResult => ({
-        ...prevResult,
-        ...data
+      console.log(`Champ ${field} récupéré avec succès`);
+      
+      // Mettre à jour le résultat et marquer le champ comme chargé
+      setSearchResult(prev => ({
+        ...prev,
+        [field]: data[field]
       }));
-
+      
+      setLoadedFields(prev => ({
+        ...prev,
+        [field]: true
+      }));
+      
       return true;
-    } catch (err) {
-      setError(err instanceof Error ? err.message : 'Une erreur est survenue');
+    } catch (err: unknown) {
+      if (err instanceof Error && err.name === 'AbortError') {
+        console.log(`Requête pour ${field} annulée`);
+        return false;
+      }
+      
+      console.error(`Erreur lors de la récupération du champ ${field}:`, err);
       return false;
     }
   };
 
-  const handleSearch = (q: string): Promise<void> => {
+  const handleSearch = async (q: string): Promise<void> => {
     setIsLoading(true);
     setError(null);
     setSearchResult({});
     setQuery(q);
     setLoadedFields({});
     setProgress(0);
+    setHasSearched(true);
     
-    if (eventSourceRef.current) {
-      eventSourceRef.current.close();
-    }
+    // Annuler toutes les requêtes précédentes
+    Object.values(abortControllersRef.current).forEach(controller => {
+      try {
+        controller.abort();
+      } catch (e) {
+        console.error("Erreur lors de l'annulation des requêtes:", e);
+      }
+    });
+    
+    abortControllersRef.current = {};
     
     try {
-      const es = new EventSource(`/api/search?query=${encodeURIComponent(q)}`);
-      eventSourceRef.current = es;
-      
-      es.onmessage = (event) => {
-        try {
-          const data = JSON.parse(event.data);
-          const key = Object.keys(data)[0];
-          
-          if (key === 'error') {
-            setError(data.error);
-            return;
-          }
-          
-          console.log('Réception du champ:', key);
-          
-          setLoadedFields(prev => {
-            const updated = {...prev, [key]: true};
-            console.log('Champs chargés:', updated);
-            return updated;
-          });
-          
-          setSearchResult(prev => {
-            if (key === 'exposition') {
-              return {
-                ...prev,
-                exposition: { ...prev.exposition, ...data[key] }
-              };
-            }
-            
-            return {
-              ...prev,
-              [key]: data[key]
-            };
-          });
-          
-          const totalFields = 8;
-          const loadedCount = Object.keys(data).length;
-          setProgress((loadedCount / totalFields) * 100);
-        } catch (e) {
-          console.error('Erreur de parsing SSE:', e);
-          setError('Erreur de parsing: ' + (e as Error).message);
+      // Lancer toutes les requêtes en parallèle avec un délai pour éviter les limitations de l'API
+      for (let i = 0; i < FIELDS.length; i++) {
+        const field = FIELDS[i];
+        
+        // Attendre un peu entre chaque requête pour éviter de surcharger l'API
+        if (i > 0) {
+          await new Promise(resolve => setTimeout(resolve, 1000));
         }
-      };
-      
-      es.onerror = (e) => {
-        console.error('Erreur SSE:', e);
-        setError('Erreur de connexion au serveur');
-        setIsLoading(false);
-      };
-      
-      const timeout = setTimeout(() => {
-        if (eventSourceRef.current) {
-          console.log('Fin du délai d\'attente, fermeture du stream');
-          eventSourceRef.current.close();
-          setIsLoading(false);
-        }
-      }, 30000);
-      
-      return Promise.resolve();
-    } catch (e) {
-      console.error('Erreur d\'initialisation SSE:', e);
-      setError('Erreur: ' + (e as Error).message);
+        
+        // Ne pas attendre que la requête soit terminée pour passer à la suivante
+        fetchField(q, field).catch(e => {
+          console.error(`Erreur lors de la récupération du champ ${field}:`, e);
+          setError(prev => prev || `Erreur: ${e instanceof Error ? e.message : 'Erreur inconnue'}`);
+        });
+      }
+    } catch (e: unknown) {
+      console.error("Erreur globale:", e);
+      setError(`Erreur: ${e instanceof Error ? e.message : 'Erreur inconnue'}`);
       setIsLoading(false);
-      return Promise.resolve();
     }
   };
 
   useEffect(() => {
-    const totalFields = 8;
+    const totalFields = FIELDS.length;
     const loadedCount = Object.values(loadedFields).filter(Boolean).length;
     const progressValue = (loadedCount / totalFields) * 100;
     
@@ -159,61 +148,110 @@ export default function Home() {
     if (loadedCount === totalFields) {
       console.log('Tous les champs sont chargés, fin du chargement');
       setIsLoading(false);
-      if (eventSourceRef.current) {
-        eventSourceRef.current.close();
-      }
     }
   }, [loadedFields]);
 
   useEffect(() => {
     return () => {
-      if (eventSourceRef.current) {
-        eventSourceRef.current.close();
-      }
+      // Nettoyer les requêtes en cours lors du démontage du composant
+      Object.values(abortControllersRef.current).forEach(controller => {
+        try {
+          controller.abort();
+        } catch (e) {
+          console.error("Erreur lors de l'annulation des requêtes:", e);
+        }
+      });
     };
   }, []);
+  
+  // Composant pour les indicateurs de champs
+  const FieldIndicators = () => (
+    <div className="flex flex-wrap gap-2 mt-4">
+      {[
+        { key: 'title', label: 'Titre', icon: '📝' },
+        { key: 'summary', label: 'Résumé', icon: '📋' },
+        { key: 'historicalContext', label: 'Contexte', icon: '🏛️' },
+        { key: 'anecdote', label: 'Anecdote', icon: '💡' },
+        { key: 'exposition', label: 'Exposé', icon: '📚' },
+        { key: 'sources', label: 'Sources', icon: '🔗' },
+        { key: 'images', label: 'Images', icon: '🖼️' },
+        { key: 'keywords', label: 'Mots-clés', icon: '🏷️' }
+      ].map(field => (
+        <span 
+          key={field.key} 
+          className={`
+            text-sm px-3 py-1 rounded-full flex items-center gap-1
+            ${loadedFields[field.key] 
+              ? 'bg-green-100 text-green-800 border border-green-300' 
+              : 'bg-gray-100 text-gray-500 border border-gray-200'
+            }
+            transition-all duration-300
+          `}
+          title={loadedFields[field.key] ? "Contenu généré" : "En attente de génération"}
+        >
+          <span>{field.icon}</span>
+          <span>{field.label}</span>
+          {loadedFields[field.key] && (
+            <span className="text-green-600">✓</span>
+          )}
+        </span>
+      ))}
+    </div>
+  );
 
   return (
     <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-12">
-      <div className="text-center mb-8">
-        <h1 className="text-4xl font-bold text-gray-900 mb-6">
-          Bienvenue sur Second Brain
-        </h1>
-        <p className="text-xl text-gray-600">
-          Votre organisateur intelligent de pensées
-        </p>
+      <div className={`transition-all duration-500 ${hasSearched ? 'mb-2' : 'mb-8'}`}>
+        <div className={`text-center transition-all duration-500 ${hasSearched ? 'transform scale-75 opacity-80 hover:opacity-100' : ''}`}>
+          <h1 
+            className={`font-bold text-gray-900 transition-all duration-500 ${hasSearched ? 'text-2xl mb-1' : 'text-4xl mb-6'}`}
+            onClick={hasSearched ? () => setHasSearched(false) : undefined}
+            title={hasSearched ? "Cliquez pour restaurer" : ""}
+            style={hasSearched ? { cursor: 'pointer' } : {}}
+          >
+            Bienvenue sur Second Brain
+          </h1>
+          {!hasSearched && (
+            <p className="text-xl text-gray-600">
+              Votre organisateur intelligent de pensées
+            </p>
+          )}
+        </div>
       </div>
 
       <div className="max-w-4xl mx-auto">
-        <SearchForm onSearch={handleSearch} isLoading={isLoading} />
+        <div className={`transition-all duration-500 ${hasSearched ? 'transform scale-90 -mt-2 opacity-90 hover:opacity-100' : ''}`}>
+          <SearchForm 
+            onSearch={handleSearch} 
+            isLoading={isLoading} 
+            minimized={hasSearched}
+          />
+        </div>
         
-        {isLoading && (
-          <div className="mt-4">
+        {hasSearched && (
+          <div className="mt-4 animate-fadeIn">
             <div className="flex items-center justify-between mb-2">
               <span className="text-sm font-medium text-gray-700">
-                Génération en cours... {Math.round(progress)}%
+                {isLoading ? `Génération en cours... ${Math.round(progress)}%` : 'Génération terminée'}
               </span>
-              <div className="flex flex-wrap gap-2">
-                {['title', 'summary', 'historicalContext', 'anecdote', 'exposition', 'sources', 'images', 'keywords'].map(field => (
-                  <span key={field} className={`text-sm px-2 py-1 rounded ${loadedFields[field] ? 'bg-green-100 text-green-800' : 'bg-gray-100 text-gray-500'}`}>
-                    {field === 'title' && 'Titre'}
-                    {field === 'summary' && 'Résumé'}
-                    {field === 'historicalContext' && 'Contexte'}
-                    {field === 'anecdote' && 'Anecdote'}
-                    {field === 'exposition' && 'Exposé'}
-                    {field === 'sources' && 'Sources'}
-                    {field === 'images' && 'Images'}
-                    {field === 'keywords' && 'Mots-clés'}
-                  </span>
-                ))}
+              <button 
+                onClick={() => setHasSearched(false)} 
+                className="text-xs text-blue-600 hover:text-blue-800 hover:underline focus:outline-none"
+              >
+                Afficher l'en-tête complet
+              </button>
+            </div>
+            
+            <FieldIndicators />
+            
+            {isLoading && (
+              <div className="w-full bg-gray-200 rounded-full h-2.5 mt-4">
+                <div 
+                  className="bg-blue-600 h-2.5 rounded-full transition-all duration-500"
+                  style={{ width: `${progress}%` }}
+                ></div>
               </div>
-            </div>
-            <div className="w-full bg-gray-200 rounded-full h-2.5">
-              <div 
-                className="bg-blue-600 h-2.5 rounded-full transition-all duration-500"
-                style={{ width: `${progress}%` }}
-              ></div>
-            </div>
+            )}
           </div>
         )}
         
