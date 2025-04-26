@@ -1,5 +1,9 @@
 import Link from 'next/link'
 
+// Import dynamique de la version depuis package.json
+// @ts-ignore
+const version = require('../package.json').version;
+
 export default function Footer() {
   return (
     <footer className="bg-gray-800 text-white py-6">
@@ -8,6 +12,7 @@ export default function Footer() {
           <p className="text-sm text-gray-400">
             © {new Date().getFullYear()} Second Brain. Tous droits réservés.
           </p>
+          <p className="text-xs text-gray-500">Version : v{version}</p>
           <div className="flex space-x-6">
             <Link 
               href="/cookies" 
