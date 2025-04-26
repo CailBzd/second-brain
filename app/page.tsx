@@ -2,7 +2,7 @@
 
 import { SearchForm } from '@/components/SearchForm';
 import { SearchResults } from '@/components/SearchResults';
-import { useState } from 'react';
+import { useState, useEffect, useRef } from 'react';
 
 interface SearchResult {
   title?: string;
@@ -34,6 +34,9 @@ export default function Home() {
   const [searchResult, setSearchResult] = useState<SearchResult>({});
   const [error, setError] = useState<string | null>(null);
   const [progress, setProgress] = useState<number>(0);
+  const [query, setQuery] = useState<string>('');
+  const eventSourceRef = useRef<EventSource | null>(null);
+  const [loadedFields, setLoadedFields] = useState<Record<string, boolean>>({});
 
   const processCategory = async (query: string, category: Category): Promise<boolean> => {
     setCurrentCategory(category);
@@ -65,29 +68,110 @@ export default function Home() {
     }
   };
 
-  const handleSearch = async (query: string) => {
+  const handleSearch = (q: string): Promise<void> => {
     setIsLoading(true);
     setError(null);
     setSearchResult({});
+    setQuery(q);
+    setLoadedFields({});
     setProgress(0);
-
-    const categories = Object.values(CATEGORIES);
-    const totalSteps = categories.length;
-
-    for (let i = 0; i < categories.length; i++) {
-      const category = categories[i] as Category;
-      const success = await processCategory(query, category);
-      
-      if (!success) {
-        setIsLoading(false);
-        return;
-      }
-
-      setProgress(((i + 1) / totalSteps) * 100);
+    
+    if (eventSourceRef.current) {
+      eventSourceRef.current.close();
     }
-
-    setIsLoading(false);
+    
+    try {
+      const es = new EventSource(`/api/search?query=${encodeURIComponent(q)}`);
+      eventSourceRef.current = es;
+      
+      es.onmessage = (event) => {
+        try {
+          const data = JSON.parse(event.data);
+          const key = Object.keys(data)[0];
+          
+          if (key === 'error') {
+            setError(data.error);
+            return;
+          }
+          
+          console.log('Réception du champ:', key);
+          
+          setLoadedFields(prev => {
+            const updated = {...prev, [key]: true};
+            console.log('Champs chargés:', updated);
+            return updated;
+          });
+          
+          setSearchResult(prev => {
+            if (key === 'exposition') {
+              return {
+                ...prev,
+                exposition: { ...prev.exposition, ...data[key] }
+              };
+            }
+            
+            return {
+              ...prev,
+              [key]: data[key]
+            };
+          });
+          
+          const totalFields = 8;
+          const loadedCount = Object.keys(data).length;
+          setProgress((loadedCount / totalFields) * 100);
+        } catch (e) {
+          console.error('Erreur de parsing SSE:', e);
+          setError('Erreur de parsing: ' + (e as Error).message);
+        }
+      };
+      
+      es.onerror = (e) => {
+        console.error('Erreur SSE:', e);
+        setError('Erreur de connexion au serveur');
+        setIsLoading(false);
+      };
+      
+      const timeout = setTimeout(() => {
+        if (eventSourceRef.current) {
+          console.log('Fin du délai d\'attente, fermeture du stream');
+          eventSourceRef.current.close();
+          setIsLoading(false);
+        }
+      }, 30000);
+      
+      return Promise.resolve();
+    } catch (e) {
+      console.error('Erreur d\'initialisation SSE:', e);
+      setError('Erreur: ' + (e as Error).message);
+      setIsLoading(false);
+      return Promise.resolve();
+    }
   };
+
+  useEffect(() => {
+    const totalFields = 8;
+    const loadedCount = Object.values(loadedFields).filter(Boolean).length;
+    const progressValue = (loadedCount / totalFields) * 100;
+    
+    console.log(`Progression: ${loadedCount}/${totalFields} (${progressValue.toFixed(0)}%)`);
+    setProgress(progressValue);
+    
+    if (loadedCount === totalFields) {
+      console.log('Tous les champs sont chargés, fin du chargement');
+      setIsLoading(false);
+      if (eventSourceRef.current) {
+        eventSourceRef.current.close();
+      }
+    }
+  }, [loadedFields]);
+
+  useEffect(() => {
+    return () => {
+      if (eventSourceRef.current) {
+        eventSourceRef.current.close();
+      }
+    };
+  }, []);
 
   return (
     <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-12">
@@ -109,12 +193,20 @@ export default function Home() {
               <span className="text-sm font-medium text-gray-700">
                 Génération en cours... {Math.round(progress)}%
               </span>
-              <span className="text-sm font-medium text-gray-700">
-                {currentCategory === 'introduction' && 'Introduction'}
-                {currentCategory === 'context' && 'Contexte historique'}
-                {currentCategory === 'exposition' && 'Exposé principal'}
-                {currentCategory === 'conclusion' && 'Conclusion et références'}
-              </span>
+              <div className="flex flex-wrap gap-2">
+                {['title', 'summary', 'historicalContext', 'anecdote', 'exposition', 'sources', 'images', 'keywords'].map(field => (
+                  <span key={field} className={`text-sm px-2 py-1 rounded ${loadedFields[field] ? 'bg-green-100 text-green-800' : 'bg-gray-100 text-gray-500'}`}>
+                    {field === 'title' && 'Titre'}
+                    {field === 'summary' && 'Résumé'}
+                    {field === 'historicalContext' && 'Contexte'}
+                    {field === 'anecdote' && 'Anecdote'}
+                    {field === 'exposition' && 'Exposé'}
+                    {field === 'sources' && 'Sources'}
+                    {field === 'images' && 'Images'}
+                    {field === 'keywords' && 'Mots-clés'}
+                  </span>
+                ))}
+              </div>
             </div>
             <div className="w-full bg-gray-200 rounded-full h-2.5">
               <div 

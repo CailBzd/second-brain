@@ -1,316 +1,283 @@
-import { NextResponse } from 'next/server';
+import { NextRequest } from 'next/server';
+
+export const runtime = 'nodejs';
 
 interface SearchResult {
-  title: string;
-  summary: string;
-  historicalContext: string;
-  anecdote: string;
-  exposition: {
+  title?: string;
+  summary?: string;
+  historicalContext?: string;
+  anecdote?: string;
+  exposition?: {
     introduction: string;
     paragraphs: string[];
     conclusion: string;
   };
-  sources: Array<{ url: string; title: string }>;
-  images: Array<{ url: string; description: string }>;
-  keywords: string[];
+  sources?: Array<{ url: string; title: string }>;
+  images?: Array<{ url: string; description: string }>;
+  keywords?: string[];
 }
 
-const CATEGORIES = {
-  INTRO: 'introduction',
-  CONTEXT: 'context',
-  EXPOSITION: 'exposition',
-  CONCLUSION: 'conclusion'
-} as const;
+const prompts = (query: string) => ({
+  title: `Donne-moi un titre accrocheur (5-10 mots max) pour : ${query}`,
+  summary: `Fais un résumé en 3 lignes pour : ${query}`,
+  historicalContext: `Donne-moi 3 repères historiques (dates ou périodes clés, 4 lignes max) pour : ${query}`,
+  anecdote: `Donne-moi une anecdote historique (3 lignes max) sur : ${query}`,
+  exposition: `Rédige un exposé structuré sur : ${query}
+Introduction (3 lignes max)
+Paragraphe 1 - Approche Philosophique (8-10 lignes)
+Paragraphe 2 - Analyse Critique (8-10 lignes) 
+Paragraphe 3 - Perspective Contemporaine (8-10 lignes)
+Conclusion (3 lignes max)`,
+  sources: `Donne-moi 3 sources fiables (format : url - titre court) pour : ${query}`,
+  images: `Donne-moi 3 images libres de droits (format : url - description courte) pour : ${query}`,
+  keywords: `Donne-moi 3 mots-clés pertinents (séparés par des virgules, 15 caractères max chacun) pour : ${query}`,
+});
 
-type Category = typeof CATEGORIES[keyof typeof CATEGORIES];
+async function askMistral(prompt: string): Promise<string> {
+  const response = await fetch('https://api.mistral.ai/v1/chat/completions', {
+    method: 'POST',
+    headers: {
+      'Content-Type': 'application/json',
+      'Authorization': `Bearer ${process.env.MISTRAL_API_KEY}`
+    },
+    body: JSON.stringify({
+      model: 'mistral-large-latest',
+      messages: [{ role: 'user', content: prompt }],
+      temperature: 0.7,
+      max_tokens: 1000,
+      top_p: 0.9
+    })
+  });
+  if (!response.ok) {
+    throw new Error(`Erreur Mistral AI (${response.status})`);
+  }
+  const data = await response.json();
+  return data.choices?.[0]?.message?.content || '';
+}
 
-export async function POST(request: Request) {
+// Utilitaire pour nettoyer le texte
+function cleanText(text: string): string {
+  return text.replace(/\([^)]*\)/g, '').replace(/\s+/g, ' ').trim();
+}
+
+function parseExposition(content: string) {
+  // Extraction de l'introduction
+  const introRegex = /introduction\s*(?:\(.*?\))?\s*:?\s*([\s\S]*?)(?=paragraphe 1|$)/i;
+  const introMatch = content.match(introRegex);
+  const introduction = introMatch ? cleanText(introMatch[1]) : '';
+
+  // Extraction des paragraphes
+  const p1Regex = /paragraphe 1.*?:?\s*([\s\S]*?)(?=paragraphe 2|$)/i;
+  const p1Match = content.match(p1Regex);
+  const p1 = p1Match ? cleanText(p1Match[1]) : '';
+
+  const p2Regex = /paragraphe 2.*?:?\s*([\s\S]*?)(?=paragraphe 3|$)/i;
+  const p2Match = content.match(p2Regex);
+  const p2 = p2Match ? cleanText(p2Match[1]) : '';
+
+  const p3Regex = /paragraphe 3.*?:?\s*([\s\S]*?)(?=conclusion|$)/i;
+  const p3Match = content.match(p3Regex);
+  const p3 = p3Match ? cleanText(p3Match[1]) : '';
+
+  // Extraction de la conclusion
+  const concluRegex = /conclusion\s*(?:\(.*?\))?\s*:?\s*([\s\S]*?)$/i;
+  const concluMatch = content.match(concluRegex);
+  const conclusion = concluMatch ? cleanText(concluMatch[1]) : '';
+
+  return {
+    introduction,
+    paragraphs: [p1, p2, p3].filter(p => p.length > 0),
+    conclusion
+  };
+}
+
+function parseSources(content: string) {
+  return content.split('\n')
+    .map(line => {
+      const match = line.match(/(?:\d+\.\s*)?(https?:\/\/[^\s]+)\s*-\s*(.*)$/);
+      return match ? { url: match[1].trim(), title: cleanText(match[2]) } : null;
+    })
+    .filter((s): s is { url: string; title: string } => !!s);
+}
+
+function parseImages(content: string) {
+  return content.split('\n')
+    .map(line => {
+      const match = line.match(/(?:\d+\.\s*)?(https?:\/\/[^\s]+)\s*-\s*(.*)$/);
+      return match ? { url: match[1].trim(), description: cleanText(match[2]) } : null;
+    })
+    .filter((img): img is { url: string; description: string } => !!img);
+}
+
+function parseKeywords(content: string) {
+  return content.split(',').map(k => cleanText(k)).filter(Boolean);
+}
+
+// Fonction utilitaire pour exécuter les tâches séquentiellement
+async function executeTasksSequentially<T>(
+  tasks: (() => Promise<T>)[],
+  controller: ReadableStreamDefaultController
+): Promise<T[]> {
+  const results: T[] = [];
+  let controllerClosed = false;
+  
+  // Fonction pour vérifier si le controller est toujours utilisable
+  const canSendData = () => !controllerClosed;
+  
+  // Fonction pour fermer le controller en toute sécurité
+  const safeCloseController = () => {
+    if (!controllerClosed) {
+      try {
+        controllerClosed = true;
+        console.log('Fermeture du stream');
+        controller.close();
+      } catch (e) {
+        console.error("Erreur lors de la fermeture du controller:", e);
+      }
+    }
+  };
+  
+  // Fonction pour envoyer des données en toute sécurité
+  const safeSendData = (data: string) => {
+    if (canSendData()) {
+      try {
+        controller.enqueue(new TextEncoder().encode(data));
+        return true;
+      } catch (e) {
+        console.error("Erreur lors de l'envoi de données:", e);
+        controllerClosed = true; // Marquer comme fermé si une erreur se produit
+        return false;
+      }
+    }
+    return false;
+  };
+  
   try {
-    const { query, category } = await request.json();
-    console.log('Requête reçue:', { query, category });
-
-    if (!query || typeof query !== 'string' || query.trim().length === 0) {
-      return NextResponse.json(
-        { error: 'La question est requise et doit être une chaîne de caractères non vide' },
-        { status: 400 }
-      );
-    }
-
-    if (!category || !Object.values(CATEGORIES).includes(category)) {
-      return NextResponse.json(
-        { error: 'Catégorie invalide ou manquante' },
-        { status: 400 }
-      );
-    }
-
-    const prompts = {
-      [CATEGORIES.INTRO]: `
-        Je vais te poser une question et je veux que tu me répondes en français pour la partie introduction.
-        
-        Question: ${query}
-
-        FORMAT EXACT À SUIVRE:
-
-        TITRE:
-        [DEBUT]
-        Un titre unique et accrocheur en 5-10 mots maximum
-        [FIN]
-
-        RÉSUMÉ:
-        [DEBUT]
-        Exactement 3 lignes de résumé.
-        Pas plus, pas moins.
-        Le résumé doit être concis et informatif.
-        [FIN]
-      `,
-      [CATEGORIES.CONTEXT]: `
-        Je vais te poser une question et je veux que tu me répondes en français pour le contexte historique.
-        
-        Question: ${query}
-
-        FORMAT EXACT À SUIVRE:
-
-        REPÈRES HISTORIQUES:
-        [DEBUT]
-        Exactement 3 dates ou périodes clés.
-        Chaque date avec un fait historique précis.
-        Maximum 4 lignes au total.
-        [FIN]
-
-        ANECDOTE:
-        [DEBUT]
-        Une seule anecdote historique intéressante.
-        Maximum 3 lignes.
-        [FIN]
-      `,
-      [CATEGORIES.EXPOSITION]: `
-        Je vais te poser une question et je veux que tu me répondes en français pour l'exposé principal.
-        
-        Question: ${query}
-
-        FORMAT EXACT À SUIVRE:
-
-        Introduction:
-        [DEBUT]
-        Présentation du sujet en 3 lignes maximum.
-        Annonce claire du plan.
-        Pas de formules de politesse.
-        [FIN]
-
-        Paragraphe 1 - Approche Philosophique:
-        [DEBUT]
-        Développement philosophique en 8-10 lignes.
-        Arguments clairs et structurés.
-        Pas de répétitions.
-        [FIN]
-
-        Paragraphe 2 - Analyse Critique:
-        [DEBUT]
-        Analyse critique en 8-10 lignes.
-        Points positifs et négatifs.
-        Arguments différents du premier paragraphe.
-        [FIN]
-
-        Paragraphe 3 - Perspective Contemporaine:
-        [DEBUT]
-        Vision moderne en 8-10 lignes.
-        Enjeux actuels.
-        Tendances futures.
-        [FIN]
-      `,
-      [CATEGORIES.CONCLUSION]: `
-        Je vais te poser une question et je veux que tu me répondes en français pour la conclusion.
-        IMPORTANT: Pour les images, utilise UNIQUEMENT des URLs d'images réelles et existantes, pas de placeholders.
-        
-        Question: ${query}
-
-        FORMAT EXACT À SUIVRE:
-
-        Conclusion:
-        [DEBUT]
-        Synthèse en 3 lignes maximum.
-        Points clés uniquement.
-        Pas de nouvelles idées.
-        [FIN]
-
-        SOURCES:
-        [DEBUT]
-        1. https://source1.com - Titre précis de la source 1 (25 caractères max)
-        2. https://source2.com - Titre précis de la source 2 (25 caractères max)
-        3. https://source3.com - Titre précis de la source 3 (25 caractères max)
-        [FIN]
-
-        IMAGES:
-        [DEBUT]
-        1. https://upload.wikimedia.org/wikipedia/commons/thumb/... - Description courte image 1 (15 mots max)
-        2. https://commons.wikimedia.org/wiki/File/... - Description courte image 2 (15 mots max)
-        3. https://images.pexels.com/photos/... - Description courte image 3 (15 mots max)
-        [FIN]
-
-        MOTS-CLÉS:
-        [DEBUT]
-        mot-clé1, mot-clé2, mot-clé3 (chaque mot-clé: 15 caractères maximum)
-        [FIN]
-      `
-    };
-
-    const selectedPrompt = prompts[category as Category];
-    console.log('Envoi de la requête à Mistral AI...');
-    
-    const response = await fetch('https://api.mistral.ai/v1/chat/completions', {
-      method: 'POST',
-      headers: {
-        'Content-Type': 'application/json',
-        'Authorization': `Bearer ${process.env.MISTRAL_API_KEY}`
-      },
-      body: JSON.stringify({
-        model: 'mistral-large-latest',
-        messages: [{ role: 'user', content: selectedPrompt }],
-        temperature: 0.7,
-        max_tokens: 1000,
-        top_p: 0.9,
-        frequency_penalty: 0.5,
-        presence_penalty: 0.5
-      })
-    });
-
-    if (!response.ok) {
-      const errorData = await response.json().catch(() => ({}));
-      console.error('Erreur Mistral AI:', errorData);
-      throw new Error(
-        `Erreur Mistral AI (${response.status}): ${errorData.error?.message || 'Erreur inconnue'}`
-      );
-    }
-
-    const data = await response.json();
-    console.log('Réponse Mistral AI:', data);
-    
-    if (!data.choices?.[0]?.message?.content) {
-      console.error('Réponse invalide:', data);
-      throw new Error('Réponse invalide de Mistral AI');
-    }
-
-    const content = data.choices[0].message.content;
-    console.log('Contenu de la réponse:', content);
-
-    // Fonction d'extraction améliorée
-    const extractSection = (content: string, sectionName: string) => {
-      const regex = new RegExp(`${sectionName}:(?:[^\\[]*\\[DEBUT\\]\\s*)([\\s\\S]*?)\\s*\\[FIN\\]`, 'i');
-      const match = content.match(regex);
-      return match ? match[1].trim() : '';
-    };
-
-    // Extraction des paragraphes avec une approche plus précise
-    const extractParagraphs = (text: string) => {
-      const paragraphsContent = extractSection(text, 'Paragraphe 1 - Approche Philosophique') + '\n\n' +
-                               extractSection(text, 'Paragraphe 2 - Analyse Critique') + '\n\n' +
-                               extractSection(text, 'Paragraphe 3 - Perspective Contemporaine');
+    // Exécuter les tâches une par une
+    for (let i = 0; i < tasks.length; i++) {
+      // Ne pas continuer si le controller est déjà fermé
+      if (controllerClosed) {
+        console.log(`Tâche ${i} ignorée car le controller est fermé`);
+        break;
+      }
       
-      return paragraphsContent
-        .split('\n\n')
-        .map(p => p.trim())
-        .filter(p => p.length > 0);
-    };
+      try {
+        // Attendre un peu entre chaque requête pour respecter les limites de l'API
+        if (i > 0) {
+          await new Promise(r => setTimeout(r, 1000));
+        }
+        
+        // Exécuter la tâche
+        results[i] = await tasks[i]();
+      } catch (e) {
+        console.error(`Erreur lors de l'exécution de la tâche ${i}:`, e);
+        results[i] = null as any;
+      }
+    }
+    
+    // Une fois toutes les tâches terminées, fermer le controller
+    // avec un petit délai pour s'assurer que toutes les données sont envoyées
+    if (!controllerClosed) {
+      console.log('Toutes les tâches terminées, fermeture programmée du stream');
+      setTimeout(safeCloseController, 1000);
+    }
+  } catch (e) {
+    console.error("Erreur globale:", e);
+  }
+  
+  return results;
+}
 
-    // Extraction des images avec une approche plus précise
-    const extractImages = (content: string) => {
-      const imagesSection = extractSection(content, 'IMAGES');
-      return imagesSection
-        .split('\n')
-        .map(line => line.trim())
-        .filter(line => line.match(/^\d+\./))
-        .map(line => {
-          const match = line.match(/^\d+\.\s*(https?:\/\/[^\s]+)\s*-\s*(.*)$/);
-          return match ? { 
-            url: match[1].trim(),
-            description: match[2].trim()
-          } : null;
-        })
-        .filter((image): image is { url: string; description: string } => image !== null);
-    };
+export async function GET(req: NextRequest) {
+  const url = new URL(req.url);
+  const query = url.searchParams.get('query');
+  
+  if (!query || query.trim().length === 0) {
+    return new Response('{"error":"La question est requise"}', { 
+      status: 400,
+      headers: { 'Content-Type': 'application/json' }
+    });
+  }
 
-    let result: Partial<SearchResult> = {};
+  // SSE headers
+  const headers = {
+    'Content-Type': 'text/event-stream',
+    'Cache-Control': 'no-cache',
+    'Connection': 'keep-alive'
+  };
 
-    switch (category) {
-      case CATEGORIES.INTRO:
-        result = {
-          title: extractSection(content, 'TITRE'),
-          summary: extractSection(content, 'RÉSUMÉ')
-        };
-        break;
-
-      case CATEGORIES.CONTEXT:
-        result = {
-          historicalContext: extractSection(content, 'REPÈRES HISTORIQUES'),
-          anecdote: extractSection(content, 'ANECDOTE')
-        };
-        break;
-
-      case CATEGORIES.EXPOSITION:
-        const paragraphs = extractParagraphs(content);
-        result = {
-          exposition: {
-            introduction: extractSection(content, 'Introduction'),
-            paragraphs: paragraphs.length === 3 ? paragraphs : ['', '', ''],
-            conclusion: ''
+  const encoder = new TextEncoder();
+  const stream = new ReadableStream({
+    async start(controller) {
+      const allPrompts = prompts(query);
+      
+      const fields = Object.entries(allPrompts);
+      console.log(`Lancement de ${fields.length} requêtes à Mistral pour la question: ${query}`);
+      
+      // Créer les tâches
+      const tasks = fields.map(([field, prompt]) => {
+        return async () => {
+          try {
+            console.log(`Requête pour le champ "${field}" envoyée à Mistral...`);
+            const content = await askMistral(prompt);
+            console.log(`Réponse reçue pour "${field}", traitement...`);
+            
+            let value: any = cleanText(content);
+            
+            // Parsing selon le champ
+            if (field === 'exposition') value = parseExposition(content);
+            if (field === 'sources') value = parseSources(content);
+            if (field === 'images') value = parseImages(content);
+            if (field === 'keywords') value = parseKeywords(content);
+            
+            // Envoyer le résultat au client
+            const data = JSON.stringify({ [field]: value });
+            controller.enqueue(encoder.encode(`data: ${data}\n\n`));
+            console.log(`Champ "${field}" envoyé au client`);
+            return { field, success: true };
+          } catch (e) {
+            console.error(`Erreur pour le champ "${field}":`, e);
+            try {
+              controller.enqueue(encoder.encode(`data: ${JSON.stringify({ error: `Erreur pour ${field}: ${(e as Error).message}` })}\n\n`));
+              return { field, success: false, error: e };
+            } catch (enqueueError) {
+              console.error(`Impossible d'envoyer l'erreur pour "${field}":`, enqueueError);
+              return { field, success: false, error: e };
+            }
           }
         };
-        break;
-
-      case CATEGORIES.CONCLUSION:
-        result = {
-          exposition: {
-            introduction: '',
-            paragraphs: [],
-            conclusion: extractSection(content, 'Conclusion')
-          },
-          sources: extractSection(content, 'SOURCES')
-            .split('\n')
-            .map(line => line.trim())
-            .filter(line => line.match(/^\d+\./))
-            .map(line => {
-              const match = line.match(/^\d+\.\s*(https?:\/\/[^\s]+)\s*-\s*(.*)$/);
-              return match ? { url: match[1].trim(), title: match[2].trim() } : null;
-            })
-            .filter((source): source is { url: string; title: string } => source !== null),
-          images: extractImages(content),
-          keywords: extractSection(content, 'MOTS-CLÉS')
-            .split(',')
-            .map(keyword => keyword.trim())
-            .filter(keyword => keyword.length > 0)
-        };
-
-        // Ensure we have at least 3 items for sources, images, and keywords
-        if (result.sources && result.sources.length < 3) {
-          result.sources = result.sources.concat(
-            Array(3 - result.sources.length).fill({ url: '', title: '' })
-          );
-        }
-
-        if (result.images && result.images.length < 3) {
-          result.images = result.images.concat(
-            Array(3 - result.images.length).fill({ url: '', description: '' })
-          );
-        }
-
-        if (result.keywords && result.keywords.length < 3) {
-          result.keywords = result.keywords.concat(
-            Array(3 - result.keywords.length).fill('')
-          );
-        }
-        break;
+      });
+      
+      // Exécuter les tâches une par une pour éviter les erreurs 429
+      // La fermeture du controller est gérée dans executeTasksSequentially
+      await executeTasksSequentially(tasks, controller);
     }
+  });
 
-    console.log('Résultat final:', result);
-    return NextResponse.json(result);
+  return new Response(stream, { headers });
+}
+
+export async function POST(req: NextRequest) {
+  try {
+    const body = await req.json();
+    const { query, category } = body;
+    
+    if (!query || typeof query !== 'string' || query.trim().length === 0) {
+      return new Response('{"error":"La question est requise"}', { 
+        status: 400,
+        headers: { 'Content-Type': 'application/json' }
+      });
+    }
+    
+    // Pour la compatibilité avec le code existant qui utilise POST
+    // Rediriger vers la version GET qui utilise SSE
+    return Response.redirect(`${req.nextUrl.origin}/api/search?query=${encodeURIComponent(query)}`);
   } catch (error) {
-    console.error('Error:', error);
-    return NextResponse.json(
-      { 
-        error: error instanceof Error ? error.message : 'Une erreur est survenue lors de la recherche',
-        details: error instanceof Error ? error.stack : undefined
-      },
-      { status: 500 }
-    );
+    return new Response(JSON.stringify({ 
+      error: error instanceof Error ? error.message : 'Une erreur est survenue' 
+    }), { 
+      status: 500,
+      headers: { 'Content-Type': 'application/json' }
+    });
   }
 } 
