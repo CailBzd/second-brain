@@ -440,7 +440,11 @@ export function SearchResults({ result, isLoading, currentCategory }: SearchResu
                       alt={image.description || 'Image illustrative'} 
                       className="w-full h-48 object-cover transition-transform group-hover:scale-105"
                       onError={(e) => {
-                        (e.target as HTMLImageElement).src = 'https://via.placeholder.com/400x300?text=Image+non+disponible';
+                        const target = e.target as HTMLImageElement;
+                        if (target.src !== window.location.origin + '/image-non-disponible.svg' && !target.src.endsWith('/image-non-disponible.svg')) {
+                          target.src = '/image-non-disponible.svg';
+                          target.onerror = null; // Empêche la boucle infinie
+                        }
                       }}
                     />
                     <div className="absolute inset-0 bg-black bg-opacity-0 group-hover:bg-opacity-40 flex items-end transition-all duration-300">

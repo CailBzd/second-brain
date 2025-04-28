@@ -17,24 +17,97 @@ interface SearchResult {
   keywords?: string[];
 }
 
-const prompts = (query: string) => ({
-  title: `Donne-moi un titre accrocheur (5-10 mots max) pour : ${query}`,
-  summary: `Fais un résumé en 3 lignes pour : ${query}`,
-  historicalContext: `Donne-moi 3 repères historiques (dates ou périodes clés, 4 lignes max) pour : ${query}`,
-  anecdote: `Donne-moi une anecdote historique (3 lignes max) sur : ${query}`,
-  exposition: `Rédige un exposé structuré sur : ${query}
+// Documentation des modèles Mistral disponibles
+const MISTRAL_MODELS = {
+  // Modèles gratuits
+  'mistral-tiny': {
+    name: 'Mistral Tiny',
+    description: 'Modèle léger pour des tâches simples',
+    maxTokens: 1000,
+    isFree: true
+  },
+  'mistral-small': {
+    name: 'Mistral Small',
+    description: 'Modèle équilibré pour la plupart des tâches',
+    maxTokens: 2000,
+    isFree: true
+  },
+  // Modèles payants
+  'mistral-medium': {
+    name: 'Mistral Medium',
+    description: 'Modèle performant pour des tâches complexes',
+    maxTokens: 4000,
+    isFree: false
+  },
+  'mistral-large': {
+    name: 'Mistral Large',
+    description: 'Modèle le plus puissant pour des tâches exigeantes',
+    maxTokens: 8000,
+    isFree: false
+  }
+} as const;
+
+type MistralModel = keyof typeof MISTRAL_MODELS;
+
+// Détection simple de la langue (anglais/français)
+function detectLanguage(text: string): 'fr' | 'en' {
+  // Si présence de mots anglais courants ou peu de caractères accentués, on suppose anglais
+  const EN_WORDS = ['the', 'and', 'is', 'in', 'of', 'to', 'for', 'with', 'on', 'as', 'by', 'an', 'be', 'this', 'that'];
+  const FR_ACCENTS = /[éèêëàâäîïôöùûüçœæ]/i;
+  const lower = text.toLowerCase();
+  const hasEn = EN_WORDS.some(w => lower.includes(` ${w} `));
+  const hasFr = FR_ACCENTS.test(text);
+  if (hasEn && !hasFr) return 'en';
+  if (hasFr && !hasEn) return 'fr';
+  // Fallback : si plus de mots anglais que d'accents, anglais, sinon français
+  return (hasEn ? 'en' : 'fr');
+}
+
+// Génération dynamique du prompt selon la langue détectée
+const prompts = (query: string) => {
+  // Si le prompt contient déjà une consigne de langue, on ne modifie rien
+  const explicitLang = /en anglais|in english|en français|in french/i.test(query);
+  const lang = explicitLang ? null : detectLanguage(query);
+
+  // Prompts en anglais
+  if (lang === 'en') {
+    return {
+      title: `Give me a catchy title (max 5-10 words) for: ${query}`,
+      summary: `Summarize in 3 lines: ${query}`,
+      historicalContext: `Give me 3 historical milestones (dates or key periods, max 4 lines) for: ${query}`,
+      anecdote: `Give me a historical anecdote (max 3 lines) about: ${query}`,
+      exposition: `Write a structured essay about: ${query}
+Introduction (max 3 lines)
+Paragraph 1 - Philosophical Approach (8-10 lines)
+Paragraph 2 - Critical Analysis (8-10 lines)
+Paragraph 3 - Contemporary Perspective (8-10 lines)
+Conclusion (max 3 lines)`,
+      sources: `Give me 3 reliable sources (format: url - short title) for: ${query}`,
+      images: `Give me 3 royalty-free images (format: url - short description) for: ${query}`,
+      keywords: `Give me 3 relevant keywords (comma separated, max 15 characters each) for: ${query}`,
+    };
+  }
+  // Prompts en français (défaut)
+  return {
+    title: `Donne-moi un titre accrocheur (5-10 mots max) pour : ${query}`,
+    summary: `Fais un résumé en 3 lignes pour : ${query}`,
+    historicalContext: `Donne-moi 3 repères historiques (dates ou périodes clés, 4 lignes max) pour : ${query}`,
+    anecdote: `Donne-moi une anecdote historique (3 lignes max) sur : ${query}`,
+    exposition: `Rédige un exposé structuré sur : ${query}
 Introduction (3 lignes max)
 Paragraphe 1 - Approche Philosophique (8-10 lignes)
 Paragraphe 2 - Analyse Critique (8-10 lignes) 
 Paragraphe 3 - Perspective Contemporaine (8-10 lignes)
 Conclusion (3 lignes max)`,
-  sources: `Donne-moi 3 sources fiables (format : url - titre court) pour : ${query}`,
-  images: `Donne-moi 3 images libres de droits (format : url - description courte) pour : ${query}`,
-  keywords: `Donne-moi 3 mots-clés pertinents (séparés par des virgules, 15 caractères max chacun) pour : ${query}`,
-});
+    sources: `Donne-moi 3 sources fiables (format : url - titre court) pour : ${query}`,
+    images: `Donne-moi 3 images libres de droits (format : url - description courte) pour : ${query}`,
+    keywords: `Donne-moi 3 mots-clés pertinents (séparés par des virgules, 15 caractères max chacun) pour : ${query}`,
+  };
+};
 
-async function askMistral(prompt: string): Promise<string> {
+async function askMistral(prompt: string, model: MistralModel = 'mistral-tiny'): Promise<string> {
   try {
+    console.log(`🔄 Appel à Mistral avec le modèle ${model}`);
     const response = await fetch('https://api.mistral.ai/v1/chat/completions', {
       method: 'POST',
       headers: {
@@ -42,16 +115,17 @@ async function askMistral(prompt: string): Promise<string> {
         'Authorization': `Bearer ${process.env.MISTRAL_API_KEY}`
       },
       body: JSON.stringify({
-        model: 'mistral-large-latest',
+        model: model,
         messages: [{ role: 'user', content: prompt }],
         temperature: 0.7,
-        max_tokens: 1000,
+        max_tokens: MISTRAL_MODELS[model].maxTokens,
         top_p: 0.9
       })
     });
     
     if (!response.ok) {
-      throw new Error(`Erreur Mistral AI (${response.status})`);
+      const errorData = await response.json();
+      throw new Error(`Erreur Mistral AI (${response.status}): ${errorData.error?.message || 'Erreur inconnue'}`);
     }
     
     const data = await response.json();
@@ -154,16 +228,31 @@ export async function GET(req: NextRequest) {
   const url = new URL(req.url);
   const field = url.searchParams.get('field');
   const query = url.searchParams.get('query');
+  const model = url.searchParams.get('model') as MistralModel || 'mistral-tiny';
   
   if (!query || query.trim().length === 0) {
     return NextResponse.json({ error: 'La question est requise' }, { status: 400 });
+  }
+
+  // Vérifier si le modèle est valide
+  if (!MISTRAL_MODELS[model]) {
+    return NextResponse.json(
+      { error: `Modèle invalide. Modèles disponibles: ${Object.keys(MISTRAL_MODELS).join(', ')}` },
+      { status: 400 }
+    );
   }
   
   // Si aucun champ n'est spécifié, retourner la liste des champs disponibles
   if (!field) {
     return NextResponse.json({
       availableFields: Object.keys(prompts(query)),
-      query
+      query,
+      availableModels: Object.entries(MISTRAL_MODELS).map(([key, value]) => ({
+        id: key,
+        name: value.name,
+        description: value.description,
+        isFree: value.isFree
+      }))
     });
   }
   
@@ -175,14 +264,14 @@ export async function GET(req: NextRequest) {
   }
   
   try {
-    console.log(`Requête pour le champ "${field}" avec la question: ${query}`);
+    console.log(`Requête pour le champ "${field}" avec la question: ${query} (modèle: ${model})`);
     
     // Récupérer le prompt pour ce champ
     const prompt = allPrompts[field as keyof typeof allPrompts];
     
     // Appeler Mistral
     console.log(`Envoi de la requête à Mistral pour le champ "${field}"...`);
-    const content = await askMistral(prompt);
+    const content = await askMistral(prompt, model);
     console.log(`Réponse reçue de Mistral pour "${field}", traitement...`);
     
     // Traiter la réponse selon le type de champ
@@ -202,6 +291,13 @@ export async function GET(req: NextRequest) {
         break;
       case 'images':
         result = parseImages(content);
+        if (!result || result.length === 0) {
+          result = [
+            { url: '/image-non-disponible.svg', description: 'Image non disponible' },
+            { url: '/image-non-disponible.svg', description: 'Image non disponible' },
+            { url: '/image-non-disponible.svg', description: 'Image non disponible' }
+          ];
+        }
         break;
       case 'keywords':
         result = parseKeywords(content);
@@ -211,7 +307,13 @@ export async function GET(req: NextRequest) {
     }
     
     console.log(`Champ "${field}" traité avec succès`);
-    return NextResponse.json({ [field]: result });
+    return NextResponse.json({ 
+      [field]: result,
+      model: {
+        name: MISTRAL_MODELS[model].name,
+        isFree: MISTRAL_MODELS[model].isFree
+      }
+    });
     
   } catch (error) {
     console.error(`Erreur lors du traitement du champ "${field}":`, error);

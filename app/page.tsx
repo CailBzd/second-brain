@@ -3,6 +3,7 @@
 import { SearchForm } from '@/components/SearchForm';
 import { SearchResults } from '@/components/SearchResults';
 import { useState, useEffect, useRef } from 'react';
+import { createClientComponentClient } from '@supabase/auth-helpers-nextjs';
 
 interface SearchResult {
   title?: string;
@@ -40,6 +41,10 @@ const FIELDS = [
   'keywords'
 ];
 
+const DEBUG = process.env.NODE_ENV === 'development';
+const REQUESTS_PER_DAY = 5;
+const REQUEST_COOLDOWN = 5 * 60 * 1000; // 5 minutes en millisecondes
+
 export default function Home() {
   const [isLoading, setIsLoading] = useState(false);
   const [currentCategory, setCurrentCategory] = useState<Category>(CATEGORIES.INTRO);
@@ -50,6 +55,61 @@ export default function Home() {
   const [loadedFields, setLoadedFields] = useState<Record<string, boolean>>({});
   const [hasSearched, setHasSearched] = useState<boolean>(false);
   const abortControllersRef = useRef<Record<string, AbortController>>({});
+  const [user, setUser] = useState<any>(null);
+  const [timeLeft, setTimeLeft] = useState<number>(0);
+  const [requestsToday, setRequestsToday] = useState<number>(0);
+  const supabase = createClientComponentClient();
+
+  useEffect(() => {
+    const checkUser = async () => {
+      try {
+        // Vérifier d'abord si nous avons une session
+        const { data: { session } } = await supabase.auth.getSession();
+        
+        if (session) {
+          const { data: { user }, error } = await supabase.auth.getUser();
+          
+          if (error) {
+            console.error('Erreur Supabase:', error);
+            throw error;
+          }
+          
+          setUser(user);
+          
+          // Vérifier les requêtes du jour pour les utilisateurs connectés
+          const today = new Date().toISOString().split('T')[0];
+          const storedRequests = localStorage.getItem(`requests_${today}`);
+          if (storedRequests) {
+            setRequestsToday(parseInt(storedRequests));
+          }
+        } else {
+          // Pour les utilisateurs non connectés, vérifier le délai entre les requêtes
+          const lastRequest = localStorage.getItem('lastRequest');
+          if (lastRequest) {
+            const timeSinceLastRequest = Date.now() - parseInt(lastRequest);
+            const timeToWait = Math.max(0, REQUEST_COOLDOWN - timeSinceLastRequest);
+            setTimeLeft(Math.ceil(timeToWait / 1000));
+          }
+        }
+      } catch (error: any) {
+        if (DEBUG) {
+          console.error('Erreur détaillée:', {
+            message: error.message,
+            code: error.code,
+            details: error.details,
+            status: error.status
+          });
+        }
+      }
+    };
+
+    checkUser();
+    const timer = setInterval(() => {
+      setTimeLeft((prev) => Math.max(0, prev - 1));
+    }, 1000);
+
+    return () => clearInterval(timer);
+  }, [supabase]);
 
   // Fonction pour récupérer un champ spécifique
   const fetchField = async (query: string, field: string) => {
@@ -95,6 +155,18 @@ export default function Home() {
   };
 
   const handleSearch = async (q: string): Promise<void> => {
+    // Vérifier les limites de requêtes
+    if (user) {
+      const today = new Date().toISOString().split('T')[0];
+      if (requestsToday >= REQUESTS_PER_DAY) {
+        setError(`Limite de requêtes atteinte. Vous avez atteint la limite de ${REQUESTS_PER_DAY} requêtes par jour. Réessayez demain.`);
+        return;
+      }
+    } else if (!DEBUG && timeLeft > 0) {
+      setError(`Veuillez patienter. Vous devez attendre ${Math.floor(timeLeft / 60)}:${(timeLeft % 60).toString().padStart(2, '0')} avant de faire une nouvelle requête.`);
+      return;
+    }
+
     setIsLoading(true);
     setError(null);
     setSearchResult({});
@@ -129,6 +201,17 @@ export default function Home() {
           console.error(`Erreur lors de la récupération du champ ${field}:`, e);
           setError(prev => prev || `Erreur: ${e instanceof Error ? e.message : 'Erreur inconnue'}`);
         });
+      }
+
+      // Mettre à jour les compteurs
+      if (user) {
+        const today = new Date().toISOString().split('T')[0];
+        const newCount = requestsToday + 1;
+        setRequestsToday(newCount);
+        localStorage.setItem(`requests_${today}`, newCount.toString());
+      } else {
+        localStorage.setItem('lastRequest', Date.now().toString());
+        setTimeLeft(300); // 5 minutes en secondes
       }
     } catch (e: unknown) {
       console.error("Erreur globale:", e);
@@ -221,11 +304,24 @@ export default function Home() {
 
       <div className="max-w-4xl mx-auto">
         <div className={`transition-all duration-500 ${hasSearched ? 'transform scale-90 -mt-2 opacity-90 hover:opacity-100' : ''}`}>
+          {user && (
+            <div className="mb-4 text-sm text-gray-600">
+              Requêtes restantes aujourd'hui : {REQUESTS_PER_DAY - requestsToday}
+            </div>
+          )}
+
           <SearchForm 
             onSearch={handleSearch} 
             isLoading={isLoading} 
             minimized={hasSearched}
           />
+
+          {!user && timeLeft > 0 && (
+            <div className="mt-4 text-sm text-gray-500 text-center">
+              Prochaine requête possible dans {Math.floor(timeLeft / 60)}:
+              {(timeLeft % 60).toString().padStart(2, '0')}
+            </div>
+          )}
         </div>
         
         {hasSearched && (
