@@ -1,6 +1,6 @@
 {
   "name": "second-brain-app",
-  "version": "0.0.3",
+  "version": "0.0.4",
   "private": true,
   "author": "PitLab",
   "license": "UNLICENSED",
@@ -13,8 +13,12 @@
   "dependencies": {
     "@heroicons/react": "2.0.18",
     "@mistralai/mistralai": "1.6.0",
+    "@radix-ui/react-avatar": "1.0.4",
+    "@radix-ui/react-dropdown-menu": "2.0.6",
     "@radix-ui/react-progress": "1.1.4",
     "@radix-ui/react-slot": "1.0.2",
+    "@supabase/auth-helpers-nextjs": "^0.8.7",
+    "@supabase/supabase-js": "^2.39.3",
     "axios": "1.6.7",
     "class-variance-authority": "0.7.0",
     "clsx": "2.1.0",

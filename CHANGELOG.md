@@ -1,5 +1,13 @@
 # Changelog
 
+## [0.0.4] - 2024-03-21
+
+### Ajouté
+- Ajout des dépendances manquantes :
+  - @radix-ui/react-avatar
+  - @radix-ui/react-dropdown-menu
+  - @supabase/supabase-js
+
 ## [0.0.3] - 2024-03-21
 
 ### Ajouté
