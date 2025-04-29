@@ -1,4 +1,5 @@
 import { NextRequest, NextResponse } from 'next/server';
+import { createClient } from '@supabase/supabase-js';
 
 export const runtime = 'nodejs';
 
@@ -307,6 +308,46 @@ export async function GET(req: NextRequest) {
     }
     
     console.log(`Champ "${field}" traité avec succès`);
+
+    // Sauvegarder dans l'historique avec Supabase
+    try {
+      const supabase = createClient(
+        process.env.SUPABASE_URL!,
+        process.env.SUPABASE_ANON_KEY!
+      );
+      const authHeader = req.headers.get('Authorization');
+      if (authHeader && authHeader.startsWith('Bearer ')) {
+        const { data: { user } } = await supabase.auth.getUser(authHeader.split(' ')[1]);
+        if (user) {
+          // Préparer les données à sauvegarder
+          const historyData = {
+            user_id: user.id,
+            query: query,
+            [field]: result,
+            model_info: {
+              name: MISTRAL_MODELS[model].name,
+              isFree: MISTRAL_MODELS[model].isFree,
+              timestamp: new Date().toISOString(),
+              field: field
+            }
+          };
+
+          // Insérer ou mettre à jour (le trigger s'occupera de la fusion)
+          const { error: insertError } = await supabase
+            .from('search_history')
+            .insert(historyData);
+
+          if (insertError) {
+            console.error("Erreur lors de la sauvegarde dans l'historique:", insertError);
+            // On continue même si la sauvegarde échoue
+          }
+        }
+      }
+    } catch (error) {
+      console.error("Erreur lors de la sauvegarde dans l'historique:", error);
+      // On continue même si la sauvegarde échoue
+    }
+
     return NextResponse.json({ 
       [field]: result,
       model: {

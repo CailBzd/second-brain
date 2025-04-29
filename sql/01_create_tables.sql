@@ -18,10 +18,16 @@ CREATE TABLE search_history (
     id UUID DEFAULT uuid_generate_v4() PRIMARY KEY,
     created_at TIMESTAMP WITH TIME ZONE DEFAULT timezone('utc'::text, now()) NOT NULL,
     user_id UUID REFERENCES auth.users NOT NULL,
-    domain_id UUID REFERENCES domains,
-    prompt TEXT NOT NULL,
-    response TEXT NOT NULL,
-    metadata JSONB DEFAULT '{}'::jsonb
+    query TEXT NOT NULL,
+    title TEXT,
+    summary TEXT,
+    historical_context TEXT,
+    anecdote TEXT,
+    exposition JSONB,  -- Pour stocker introduction, paragraphs, conclusion
+    sources JSONB,     -- Pour stocker le tableau de sources
+    images JSONB,      -- Pour stocker le tableau d'images
+    keywords TEXT[],   -- Tableau de mots-clés
+    model_info JSONB   -- Pour stocker les informations sur le modèle utilisé
 );
 
 -- Create domain_tags table
@@ -45,7 +51,8 @@ CREATE TABLE domain_tag_relations (
 -- Create indexes
 CREATE INDEX idx_domains_user_id ON domains(user_id);
 CREATE INDEX idx_search_history_user_id ON search_history(user_id);
-CREATE INDEX idx_search_history_domain_id ON search_history(domain_id);
+CREATE INDEX idx_search_history_created_at ON search_history(created_at);
+CREATE INDEX idx_search_history_query ON search_history USING gin(to_tsvector('french', query));
 CREATE INDEX idx_domain_tags_user_id ON domain_tags(user_id);
 CREATE INDEX idx_domain_tag_relations_domain_id ON domain_tag_relations(domain_id);
 CREATE INDEX idx_domain_tag_relations_tag_id ON domain_tag_relations(tag_id);
