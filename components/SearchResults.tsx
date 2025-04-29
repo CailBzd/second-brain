@@ -11,7 +11,7 @@ interface Image {
 interface SearchResult {
   title?: string;
   summary?: string;
-  historicalContext?: string;
+  historical_context?: string;
   anecdote?: string;
   exposition?: {
     introduction?: string;
@@ -103,7 +103,7 @@ export function SearchResults({ result, isLoading, currentCategory }: SearchResu
   ];
 
   // Fonction pour traiter le texte des repères historiques
-  const parseHistoricalContext = (text: string) => {
+  const parsehistorical_context = (text: string) => {
     if (!text) return [];
     
     // Chercher spécifiquement les patterns "1. ", "2. " et "3. "
@@ -216,12 +216,12 @@ export function SearchResults({ result, isLoading, currentCategory }: SearchResu
       )}
 
       {/* Repères Historiques */}
-      {result.historicalContext ? (
+      {result.historical_context ? (
         <section className="bg-purple-50 p-4 rounded-lg animate-fadeIn">
           <h2 className="text-2xl font-bold mb-4 text-purple-800">Repères Historiques</h2>
           
           <div className="space-y-3">
-            {parseHistoricalContext(result.historicalContext).map((point, index) => {
+            {parsehistorical_context(result.historical_context).map((point, index) => {
               // Détecter le numéro en début de chaîne
               const numberMatch = point.match(/^(\d+)\./);
               const pointNumber = numberMatch ? numberMatch[1] : String(index + 1);

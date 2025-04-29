@@ -1,12 +1,22 @@
 import { NextRequest, NextResponse } from 'next/server';
-import { createClient } from '@supabase/supabase-js';
+import { getSupabaseClient } from '@/lib/supabase';
+import { cookies } from 'next/headers';
+import { MISTRAL_MODELS, MistralModel } from '@/app/utils/searchUtils';
 
 export const runtime = 'nodejs';
+
+// Initialize Supabase client
+const supabaseUrl = process.env.NEXT_PUBLIC_SUPABASE_URL;
+const supabaseKey = process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY;
+
+if (!supabaseUrl || !supabaseKey) {
+  console.error('Missing Supabase environment variables');
+}
 
 interface SearchResult {
   title?: string;
   summary?: string;
-  historicalContext?: string;
+  historical_context?: string;
   anecdote?: string;
   exposition?: {
     introduction: string;
@@ -18,93 +28,66 @@ interface SearchResult {
   keywords?: string[];
 }
 
-// Documentation des modèles Mistral disponibles
-const MISTRAL_MODELS = {
-  // Modèles gratuits
-  'mistral-tiny': {
-    name: 'Mistral Tiny',
-    description: 'Modèle léger pour des tâches simples',
-    maxTokens: 1000,
-    isFree: true
-  },
-  'mistral-small': {
-    name: 'Mistral Small',
-    description: 'Modèle équilibré pour la plupart des tâches',
-    maxTokens: 2000,
-    isFree: true
-  },
-  // Modèles payants
-  'mistral-medium': {
-    name: 'Mistral Medium',
-    description: 'Modèle performant pour des tâches complexes',
-    maxTokens: 4000,
-    isFree: false
-  },
-  'mistral-large': {
-    name: 'Mistral Large',
-    description: 'Modèle le plus puissant pour des tâches exigeantes',
-    maxTokens: 8000,
-    isFree: false
-  }
-} as const;
-
-type MistralModel = keyof typeof MISTRAL_MODELS;
-
-// Détection simple de la langue (anglais/français)
-function detectLanguage(text: string): 'fr' | 'en' {
-  // Si présence de mots anglais courants ou peu de caractères accentués, on suppose anglais
-  const EN_WORDS = ['the', 'and', 'is', 'in', 'of', 'to', 'for', 'with', 'on', 'as', 'by', 'an', 'be', 'this', 'that'];
-  const FR_ACCENTS = /[éèêëàâäîïôöùûüçœæ]/i;
-  const lower = text.toLowerCase();
-  const hasEn = EN_WORDS.some(w => lower.includes(` ${w} `));
-  const hasFr = FR_ACCENTS.test(text);
-  if (hasEn && !hasFr) return 'en';
-  if (hasFr && !hasEn) return 'fr';
-  // Fallback : si plus de mots anglais que d'accents, anglais, sinon français
-  return (hasEn ? 'en' : 'fr');
+interface SearchHistory {
+  id: string;
+  query: string;
+  title?: string;
+  summary?: string;
+  historical_context?: string;
+  anecdote?: string;
+  exposition?: string;
+  sources?: string[];
+  keywords?: string[];
 }
 
-// Génération dynamique du prompt selon la langue détectée
-const prompts = (query: string) => {
-  // Si le prompt contient déjà une consigne de langue, on ne modifie rien
-  const explicitLang = /en anglais|in english|en français|in french/i.test(query);
-  const lang = explicitLang ? null : detectLanguage(query);
+// Prompts en français uniquement
+const prompts = (query: string) => ({
+  title: `En français uniquement, donne-moi un titre accrocheur (10 mots max) pour : ${query}`,
+  
+  summary: `En français uniquement, fais un résumé synthétique en 3 lignes pour : ${query}`,
+  
+  historical_context: `En français uniquement, donne-moi 3 repères historiques importants (avec dates ou périodes clés, 4 lignes maximum) pour : ${query}
+Format souhaité :
+1. [Date/Période] - Premier repère historique
+2. [Date/Période] - Deuxième repère historique
+3. [Date/Période] - Troisième repère historique`,
+  
+  anecdote: `En français uniquement, raconte-moi une anecdote historique intéressante et peu connue (3 lignes maximum) sur : ${query}`,
+  
+  exposition: `En français uniquement, rédige un exposé structuré et détaillé sur : ${query}
 
-  // Prompts en anglais
-  if (lang === 'en') {
-    return {
-      title: `Give me a catchy title (max 5-10 words) for: ${query}`,
-      summary: `Summarize in 3 lines: ${query}`,
-      historicalContext: `Give me 3 historical milestones (dates or key periods, max 4 lines) for: ${query}`,
-      anecdote: `Give me a historical anecdote (max 3 lines) about: ${query}`,
-      exposition: `Write a structured essay about: ${query}
-Introduction (max 3 lines)
-Paragraph 1 - Philosophical Approach (8-10 lines)
-Paragraph 2 - Critical Analysis (8-10 lines)
-Paragraph 3 - Contemporary Perspective (8-10 lines)
-Conclusion (max 3 lines)`,
-      sources: `Give me 3 reliable sources (format: url - short title) for: ${query}`,
-      images: `Give me 3 royalty-free images (format: url - short description) for: ${query}`,
-      keywords: `Give me 3 relevant keywords (comma separated, max 15 characters each) for: ${query}`,
-    };
-  }
-  // Prompts en français (défaut)
-  return {
-    title: `Donne-moi un titre accrocheur (5-10 mots max) pour : ${query}`,
-    summary: `Fais un résumé en 3 lignes pour : ${query}`,
-    historicalContext: `Donne-moi 3 repères historiques (dates ou périodes clés, 4 lignes max) pour : ${query}`,
-    anecdote: `Donne-moi une anecdote historique (3 lignes max) sur : ${query}`,
-    exposition: `Rédige un exposé structuré sur : ${query}
-Introduction (3 lignes max)
-Paragraphe 1 - Approche Philosophique (8-10 lignes)
-Paragraphe 2 - Analyse Critique (8-10 lignes) 
-Paragraphe 3 - Perspective Contemporaine (8-10 lignes)
-Conclusion (3 lignes max)`,
-    sources: `Donne-moi 3 sources fiables (format : url - titre court) pour : ${query}`,
-    images: `Donne-moi 3 images libres de droits (format : url - description courte) pour : ${query}`,
-    keywords: `Donne-moi 3 mots-clés pertinents (séparés par des virgules, 15 caractères max chacun) pour : ${query}`,
-  };
-};
+Structure demandée :
+Introduction (3 lignes maximum) :
+- Présentation du sujet
+- Problématique
+- Annonce du plan
+
+Paragraphe 1 - Approche Philosophique (8-10 lignes) :
+- Analyse des concepts fondamentaux
+- Réflexion sur les implications philosophiques
+
+Paragraphe 2 - Analyse Critique (8-10 lignes) :
+- Arguments principaux
+- Contre-arguments
+- Discussion des points de vue opposés
+
+Paragraphe 3 - Perspective Contemporaine (8-10 lignes) :
+- Applications actuelles
+- Enjeux modernes
+- Perspectives d'avenir
+
+Conclusion (3 lignes maximum) :
+- Synthèse des points clés
+- Ouverture sur une réflexion plus large`,
+  
+  sources: `En français uniquement, donne-moi 3 sources fiables et pertinentes (en privilégiant les sources francophones) pour : ${query}
+Format demandé pour chaque source : url - titre court de la source`,
+  
+  images: `En français uniquement, suggère-moi 3 images libres de droits pertinentes pour illustrer : ${query}
+Format demandé pour chaque image : url - description courte en français`,
+  
+  keywords: `En français uniquement, donne-moi 3 mots-clés ou expressions clés pertinents (séparés par des virgules, maximum 15 caractères chacun) pour : ${query}`
+});
 
 async function askMistral(prompt: string, model: MistralModel = 'mistral-tiny'): Promise<string> {
   try {
@@ -221,6 +204,65 @@ function parseKeywords(content: string) {
   }
 }
 
+// Function to store search results in Supabase
+async function storeSearchResult(query: string, field: string, result: any, model: MistralModel) {
+  try {
+    const supabase = getSupabaseClient();
+    const { data: userData, error: userError } = await supabase.auth.getUser();
+    
+    if (userError || !userData?.user?.id) {
+      console.log('Utilisateur non authentifié, sauvegarde ignorée');
+      return;
+    }
+
+    const userId = userData.user.id;
+    console.log('Sauvegarde pour utilisateur:', userId);
+
+    // Check if there's an existing search for this query
+    const { data: existingSearch, error: searchError } = await supabase
+      .from('search_history')
+      .select('*')
+      .eq('user_id', userId)
+      .eq('query', query)
+      .order('created_at', { ascending: false })
+      .limit(1)
+      .maybeSingle();
+
+    if (searchError && searchError.code !== 'PGRST116') {
+      console.error('Erreur lors de la recherche d\'historique:', searchError);
+      return;
+    }
+
+    const searchData = {
+      [field]: result
+    };
+
+    console.log('Données à sauvegarder:', searchData);
+
+    if (existingSearch) {
+      // Update existing search
+      const { error: updateError } = await supabase
+        .from('search_history')
+        .update(searchData)
+        .eq('id', existingSearch.id)
+        .select();
+      
+      if (updateError) {
+        console.error('Erreur lors de la mise à jour:', updateError);
+        return;
+      }
+      console.log('Mise à jour réussie pour le champ:', field);
+    } else {
+      // N'insère pas de nouvelle entrée ici - cela sera fait dans le composant page.tsx
+      console.log('Aucune entrée existante trouvée pour cette requête. La sauvegarde sera gérée par le client.');
+    }
+
+    console.log(`Résultat de recherche traité pour le champ "${field}"`);
+  } catch (error) {
+    console.error('Erreur lors de la sauvegarde du résultat:', error);
+  }
+}
+
 // NOUVELLE APPROCHE: API REST avec un endpoint pour chaque champ
 // Le frontend fera des requêtes individuelles par champ
 
@@ -270,9 +312,32 @@ export async function GET(req: NextRequest) {
     // Récupérer le prompt pour ce champ
     const prompt = allPrompts[field as keyof typeof allPrompts];
     
-    // Appeler Mistral
-    console.log(`Envoi de la requête à Mistral pour le champ "${field}"...`);
-    const content = await askMistral(prompt, model);
+    // Ajouter un délai aléatoire entre 1 et 3 secondes pour éviter les rate limits
+    const delay = Math.floor(Math.random() * 2000) + 1000;
+    console.log(`Attente de ${delay}ms avant l'appel à Mistral...`);
+    await new Promise(resolve => setTimeout(resolve, delay));
+    
+    // Appeler Mistral avec retry en cas d'erreur 429
+    let retries = 3;
+    let content = '';
+    
+    while (retries > 0) {
+      try {
+        console.log(`Tentative d'appel à Mistral (${retries} essais restants)...`);
+        content = await askMistral(prompt, model);
+        break;
+      } catch (error: any) {
+        if (error.message?.includes('429') && retries > 1) {
+          retries--;
+          const waitTime = (4 - retries) * 2000; // Attente progressive : 2s, 4s, 6s
+          console.log(`Rate limit atteint, attente de ${waitTime}ms avant nouvel essai...`);
+          await new Promise(resolve => setTimeout(resolve, waitTime));
+        } else {
+          throw error;
+        }
+      }
+    }
+    
     console.log(`Réponse reçue de Mistral pour "${field}", traitement...`);
     
     // Traiter la réponse selon le type de champ
@@ -280,7 +345,7 @@ export async function GET(req: NextRequest) {
     switch (field) {
       case 'title':
       case 'summary':
-      case 'historicalContext':
+      case 'historical_context':
       case 'anecdote':
         result = cleanText(content);
         break;
@@ -309,45 +374,10 @@ export async function GET(req: NextRequest) {
     
     console.log(`Champ "${field}" traité avec succès`);
 
-    // Sauvegarder dans l'historique avec Supabase
-    try {
-      const supabase = createClient(
-        process.env.SUPABASE_URL!,
-        process.env.SUPABASE_ANON_KEY!
-      );
-      const authHeader = req.headers.get('Authorization');
-      if (authHeader && authHeader.startsWith('Bearer ')) {
-        const { data: { user } } = await supabase.auth.getUser(authHeader.split(' ')[1]);
-        if (user) {
-          // Préparer les données à sauvegarder
-          const historyData = {
-            user_id: user.id,
-            query: query,
-            [field]: result,
-            model_info: {
-              name: MISTRAL_MODELS[model].name,
-              isFree: MISTRAL_MODELS[model].isFree,
-              timestamp: new Date().toISOString(),
-              field: field
-            }
-          };
+    // Store the result in Supabase
+    await storeSearchResult(query, field, result, model);
 
-          // Insérer ou mettre à jour (le trigger s'occupera de la fusion)
-          const { error: insertError } = await supabase
-            .from('search_history')
-            .insert(historyData);
-
-          if (insertError) {
-            console.error("Erreur lors de la sauvegarde dans l'historique:", insertError);
-            // On continue même si la sauvegarde échoue
-          }
-        }
-      }
-    } catch (error) {
-      console.error("Erreur lors de la sauvegarde dans l'historique:", error);
-      // On continue même si la sauvegarde échoue
-    }
-
+    // Return the result
     return NextResponse.json({ 
       [field]: result,
       model: {

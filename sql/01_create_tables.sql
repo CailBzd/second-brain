@@ -48,6 +48,17 @@ CREATE TABLE domain_tag_relations (
     PRIMARY KEY (domain_id, tag_id)
 );
 
+-- Create daily_requests table
+CREATE TABLE daily_requests (
+    id UUID DEFAULT uuid_generate_v4() PRIMARY KEY,
+    created_at TIMESTAMP WITH TIME ZONE DEFAULT timezone('utc'::text, now()) NOT NULL,
+    updated_at TIMESTAMP WITH TIME ZONE DEFAULT timezone('utc'::text, now()) NOT NULL,
+    user_id UUID REFERENCES auth.users NOT NULL,
+    request_date DATE NOT NULL,
+    request_count INTEGER DEFAULT 0,
+    CONSTRAINT unique_user_date UNIQUE (user_id, request_date)
+);
+
 -- Create indexes
 CREATE INDEX idx_domains_user_id ON domains(user_id);
 CREATE INDEX idx_search_history_user_id ON search_history(user_id);
@@ -56,12 +67,14 @@ CREATE INDEX idx_search_history_query ON search_history USING gin(to_tsvector('f
 CREATE INDEX idx_domain_tags_user_id ON domain_tags(user_id);
 CREATE INDEX idx_domain_tag_relations_domain_id ON domain_tag_relations(domain_id);
 CREATE INDEX idx_domain_tag_relations_tag_id ON domain_tag_relations(tag_id);
+CREATE INDEX idx_daily_requests_user_date ON daily_requests(user_id, request_date);
 
 -- Enable Row Level Security
 ALTER TABLE domains ENABLE ROW LEVEL SECURITY;
 ALTER TABLE search_history ENABLE ROW LEVEL SECURITY;
 ALTER TABLE domain_tags ENABLE ROW LEVEL SECURITY;
 ALTER TABLE domain_tag_relations ENABLE ROW LEVEL SECURITY;
+ALTER TABLE daily_requests ENABLE ROW LEVEL SECURITY;
 
 -- Create policies
 -- Domains policies
@@ -140,4 +153,17 @@ CREATE POLICY "Users can delete their own domain tag relations"
             WHERE domains.id = domain_tag_relations.domain_id
             AND domains.user_id = auth.uid()
         )
-    ); 
+    );
+
+-- Daily requests policies
+CREATE POLICY "Users can view their own daily requests"
+    ON daily_requests FOR SELECT
+    USING (auth.uid() = user_id);
+
+CREATE POLICY "Users can insert their own daily requests"
+    ON daily_requests FOR INSERT
+    WITH CHECK (auth.uid() = user_id);
+
+CREATE POLICY "Users can update their own daily requests"
+    ON daily_requests FOR UPDATE
+    USING (auth.uid() = user_id); 
