@@ -49,65 +49,25 @@ const MISTRAL_MODELS = {
 
 type MistralModel = keyof typeof MISTRAL_MODELS;
 
-// Détection simple de la langue (anglais/français)
-function detectLanguage(text: string): 'fr' | 'en' {
-  // Si présence de mots anglais courants ou peu de caractères accentués, on suppose anglais
-  const EN_WORDS = ['the', 'and', 'is', 'in', 'of', 'to', 'for', 'with', 'on', 'as', 'by', 'an', 'be', 'this', 'that'];
-  const FR_ACCENTS = /[éèêëàâäîïôöùûüçœæ]/i;
-  const lower = text.toLowerCase();
-  const hasEn = EN_WORDS.some(w => lower.includes(` ${w} `));
-  const hasFr = FR_ACCENTS.test(text);
-  if (hasEn && !hasFr) return 'en';
-  if (hasFr && !hasEn) return 'fr';
-  // Fallback : si plus de mots anglais que d'accents, anglais, sinon français
-  return (hasEn ? 'en' : 'fr');
-}
-
-// Génération dynamique du prompt selon la langue détectée
-const prompts = (query: string) => {
-  // Si le prompt contient déjà une consigne de langue, on ne modifie rien
-  const explicitLang = /en anglais|in english|en français|in french/i.test(query);
-  const lang = explicitLang ? null : detectLanguage(query);
-
-  // Prompts en anglais
-  if (lang === 'en') {
-    return {
-      title: `Give me a catchy title (max 5-10 words) for: ${query}`,
-      summary: `Summarize in 3 lines: ${query}`,
-      historicalContext: `Give me 3 historical milestones (dates or key periods, max 4 lines) for: ${query}`,
-      anecdote: `Give me a historical anecdote (max 3 lines) about: ${query}`,
-      exposition: `Write a structured essay about: ${query}
-Introduction (max 3 lines)
-Paragraph 1 - Philosophical Approach (8-10 lines)
-Paragraph 2 - Critical Analysis (8-10 lines)
-Paragraph 3 - Contemporary Perspective (8-10 lines)
-Conclusion (max 3 lines)`,
-      sources: `Give me 3 reliable sources (format: url - short title) for: ${query}`,
-      images: `Give me 3 royalty-free images (format: url - short description) for: ${query}`,
-      keywords: `Give me 3 relevant keywords (comma separated, max 15 characters each) for: ${query}`,
-    };
-  }
-  // Prompts en français (défaut)
-  return {
-    title: `Donne-moi un titre accrocheur (5-10 mots max) pour : ${query}`,
-    summary: `Fais un résumé en 3 lignes pour : ${query}`,
-    historicalContext: `Donne-moi 3 repères historiques (dates ou périodes clés, 4 lignes max) pour : ${query}`,
-    anecdote: `Donne-moi une anecdote historique (3 lignes max) sur : ${query}`,
-    exposition: `Rédige un exposé structuré sur : ${query}
-Introduction (3 lignes max)
-Paragraphe 1 - Approche Philosophique (8-10 lignes)
-Paragraphe 2 - Analyse Critique (8-10 lignes) 
-Paragraphe 3 - Perspective Contemporaine (8-10 lignes)
-Conclusion (3 lignes max)`,
-    sources: `Donne-moi 3 sources fiables (format : url - titre court) pour : ${query}`,
-    images: `Donne-moi 3 images libres de droits (format : url - description courte) pour : ${query}`,
-    keywords: `Donne-moi 3 mots-clés pertinents (séparés par des virgules, 15 caractères max chacun) pour : ${query}`,
-  };
-};
+// Prompts en français
+const prompts = (query: string) => ({
+  title: `Donne-moi un titre accrocheur en français (5-10 mots max) pour : ${query}`,
+  summary: `Fais un résumé en français en 3 lignes pour : ${query}`,
+  historicalContext: `Donne-moi 3 repères historiques en français (dates ou périodes clés, 4 lignes max) pour : ${query}`,
+  anecdote: `Donne-moi une anecdote historique en français (3 lignes max) sur : ${query}`,
+  exposition: `Rédige un exposé structuré en français sur : ${query}
+Introduction en français (3 lignes max)
+Paragraphe 1 - Approche Philosophique en français (8-10 lignes)
+Paragraphe 2 - Analyse Critique en français (8-10 lignes) 
+Paragraphe 3 - Perspective Contemporaine en français (8-10 lignes)
+Conclusion en français (3 lignes max)`,
+  sources: `Donne-moi 3 sources fiables en français (format : url - titre court) pour : ${query}`,
+  images: `Donne-moi 3 images libres de droits en français (format : url - description courte) pour : ${query}`,
+  keywords: `Donne-moi 3 mots-clés pertinents en français (séparés par des virgules, 15 caractères max chacun) pour : ${query}`,
+});
 
 async function askMistral(prompt: string, model: MistralModel = 'mistral-tiny'): Promise<string> {
   try {
-    console.log(`🔄 Appel à Mistral avec le modèle ${model}`);
     const response = await fetch('https://api.mistral.ai/v1/chat/completions', {
       method: 'POST',
       headers: {
