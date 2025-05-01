@@ -91,7 +91,6 @@ Format demandé pour chaque image : url - description courte en français`,
 
 async function askMistral(prompt: string, model: MistralModel = 'mistral-tiny'): Promise<string> {
   try {
-    console.log(`🔄 Appel à Mistral avec le modèle ${model}`);
     const response = await fetch('https://api.mistral.ai/v1/chat/completions', {
       method: 'POST',
       headers: {
