@@ -1,54 +1,36 @@
 "use client";
 
+import { FieldIndicators } from './components/FieldIndicators';
+import { useState, useEffect, useRef } from 'react';
+import { getSupabaseClient } from '@/lib/supabase';
+import { insertSearchHistory } from '@/lib/supabase';
+import { 
+  CATEGORIES, 
+  Category, 
+  FIELDS, 
+  DEBUG,
+  REQUESTS_PER_DAY,
+  REQUEST_COOLDOWN,
+  fetchField,
+  formatResultsForSave,
+  saveSearchHistory
+} from './utils/searchUtils';
 import { SearchForm } from '@/components/SearchForm';
 import { SearchResults } from '@/components/SearchResults';
-import { useState, useEffect, useRef } from 'react';
-import { createClientComponentClient } from '@supabase/auth-helpers-nextjs';
+import { insertDailyRequest, updateDailyRequestById, selectDailyRequestByUserAndDate } from '@/lib/supabase';
 
-interface SearchResult {
-  title?: string;
-  summary?: string;
-  historicalContext?: string;
-  anecdote?: string;
-  exposition?: {
-    introduction: string;
-    paragraphs: string[];
-    conclusion: string;
-  };
-  sources?: Array<{ url: string; title: string }>;
-  images?: Array<{ url: string; description: string }>;
-  keywords?: string[];
+interface LocalSearchResult {
+  [key: string]: any;
 }
 
-const CATEGORIES = {
-  INTRO: 'introduction',
-  CONTEXT: 'context',
-  EXPOSITION: 'exposition',
-  CONCLUSION: 'conclusion'
-} as const;
-
-type Category = typeof CATEGORIES[keyof typeof CATEGORIES];
-
-// Liste des champs à récupérer
-const FIELDS = [
-  'title',
-  'summary',
-  'historicalContext',
-  'anecdote',
-  'exposition',
-  'sources',
-  'images',
-  'keywords'
-];
-
-const DEBUG = process.env.NODE_ENV === 'development';
-const REQUESTS_PER_DAY = 5;
-const REQUEST_COOLDOWN = 5 * 60 * 1000; // 5 minutes en millisecondes
+interface ApiResponse {
+  [key: string]: any;
+}
 
 export default function Home() {
   const [isLoading, setIsLoading] = useState(false);
   const [currentCategory, setCurrentCategory] = useState<Category>(CATEGORIES.INTRO);
-  const [searchResult, setSearchResult] = useState<SearchResult>({});
+  const [searchResult, setSearchResult] = useState<LocalSearchResult>({});
   const [error, setError] = useState<string | null>(null);
   const [progress, setProgress] = useState<number>(0);
   const [query, setQuery] = useState<string>('');
@@ -58,32 +40,47 @@ export default function Home() {
   const [user, setUser] = useState<any>(null);
   const [timeLeft, setTimeLeft] = useState<number>(0);
   const [requestsToday, setRequestsToday] = useState<number>(0);
-  const supabase = createClientComponentClient();
+  const supabase = getSupabaseClient();
 
   useEffect(() => {
     const checkUser = async () => {
       try {
-        // Vérifier d'abord si nous avons une session
         const { data: { session } } = await supabase.auth.getSession();
         
         if (session) {
           const { data: { user }, error } = await supabase.auth.getUser();
           
-          if (error) {
-            console.error('Erreur Supabase:', error);
-            throw error;
-          }
+          if (error) throw error;
           
           setUser(user);
           
-          // Vérifier les requêtes du jour pour les utilisateurs connectés
           const today = new Date().toISOString().split('T')[0];
-          const storedRequests = localStorage.getItem(`requests_${today}`);
-          if (storedRequests) {
-            setRequestsToday(parseInt(storedRequests));
+          
+          // Nettoyer les anciennes requêtes
+          const { error: cleanupError } = await getSupabaseClient()
+            .from('daily_requests')
+            .delete()
+            .lt('request_date', today);
+
+          if (cleanupError) {
+            console.error('Erreur lors du nettoyage des anciennes requêtes:', cleanupError);
+          }
+
+          // Récupérer le compteur du jour
+          let dailyRequests = null;
+          let dailyError = null;
+          if (user?.id) {
+            const result = await selectDailyRequestByUserAndDate(user.id, today);
+            dailyRequests = result.data;
+            dailyError = result.error;
+          }
+
+          if (dailyError) {
+            console.error('Erreur lors de la récupération des requêtes quotidiennes:', dailyError);
+          } else {
+            setRequestsToday(dailyRequests?.request_count || 0);
           }
         } else {
-          // Pour les utilisateurs non connectés, vérifier le délai entre les requêtes
           const lastRequest = localStorage.getItem('lastRequest');
           if (lastRequest) {
             const timeSinceLastRequest = Date.now() - parseInt(lastRequest);
@@ -111,53 +108,72 @@ export default function Home() {
     return () => clearInterval(timer);
   }, [supabase]);
 
-  // Fonction pour récupérer un champ spécifique
-  const fetchField = async (query: string, field: string) => {
+  useEffect(() => {
+    const reloadedSearch = localStorage.getItem('reloadedSearch');
+    if (reloadedSearch) {
+      const searchData = JSON.parse(reloadedSearch);
+      setQuery(searchData.query);
+      setSearchResult(searchData);
+      setHasSearched(true);
+      setLoadedFields(
+        Object.fromEntries(
+          FIELDS.map(field => [field, Boolean(searchData[field])])
+        )
+      );
+      localStorage.removeItem('reloadedSearch');
+    }
+  }, []);
+
+  const updateDailyRequests = async (userId: string) => {
+    const today = new Date().toISOString().split('T')[0];
+    
     try {
-      // Créer un nouvel AbortController pour cette requête
-      abortControllersRef.current[field] = new AbortController();
-      
-      console.log(`Récupération du champ ${field}...`);
-      
-      const response = await fetch(`/api/search?query=${encodeURIComponent(query)}&field=${field}`, {
-        signal: abortControllersRef.current[field].signal
-      });
-      
-      if (!response.ok) {
-        const errorData = await response.json();
-        throw new Error(errorData.error || `Erreur lors de la récupération du champ ${field}`);
+      // Vérifier si une entrée existe déjà pour aujourd'hui
+      const { data: existingRequest, error: fetchError } = await selectDailyRequestByUserAndDate(userId, today);
+
+      if (fetchError) {
+        console.error('Erreur lors de la vérification des requêtes:', fetchError);
+        return;
       }
-      
-      const data = await response.json();
-      console.log(`Champ ${field} récupéré avec succès`);
-      
-      // Mettre à jour le résultat et marquer le champ comme chargé
-      setSearchResult(prev => ({
-        ...prev,
-        [field]: data[field]
-      }));
-      
-      setLoadedFields(prev => ({
-        ...prev,
-        [field]: true
-      }));
-      
-      return true;
-    } catch (err: unknown) {
-      if (err instanceof Error && err.name === 'AbortError') {
-        console.log(`Requête pour ${field} annulée`);
-        return false;
+
+      if (existingRequest) {
+        // Mettre à jour le compteur existant
+        const { error: updateError } = await updateDailyRequestById(existingRequest.id, {
+          request_count: existingRequest.request_count + 1,
+          updated_at: new Date().toISOString()
+        });
+
+        if (updateError) {
+          console.error('Erreur lors de la mise à jour du compteur:', updateError);
+        } else {
+          setRequestsToday(prev => prev + 1);
+        }
+      } else {
+        // Créer une nouvelle entrée
+        const { error: insertError } = await insertDailyRequest({
+          user_id: userId,
+          request_date: today,
+          request_count: 1,
+          created_at: new Date().toISOString(),
+          updated_at: new Date().toISOString()
+        });
+
+        if (insertError) {
+          console.error('Erreur lors de la création du compteur:', insertError);
+        } else {
+          setRequestsToday(1);
+        }
       }
-      
-      console.error(`Erreur lors de la récupération du champ ${field}:`, err);
-      return false;
+    } catch (error) {
+      console.error('Erreur lors de la mise à jour des requêtes quotidiennes:', error);
     }
   };
 
   const handleSearch = async (q: string): Promise<void> => {
-    // Vérifier les limites de requêtes
+    console.log('=== Début de la recherche ===');
+    console.log('Query:', q);
+    
     if (user) {
-      const today = new Date().toISOString().split('T')[0];
       if (requestsToday >= REQUESTS_PER_DAY) {
         setError(`Limite de requêtes atteinte. Vous avez atteint la limite de ${REQUESTS_PER_DAY} requêtes par jour. Réessayez demain.`);
         return;
@@ -175,47 +191,129 @@ export default function Home() {
     setProgress(0);
     setHasSearched(true);
     
-    // Annuler toutes les requêtes précédentes
-    Object.values(abortControllersRef.current).forEach(controller => {
-      try {
-        controller.abort();
-      } catch (e) {
-        console.error("Erreur lors de l'annulation des requêtes:", e);
-      }
-    });
-    
-    abortControllersRef.current = {};
-    
     try {
-      // Lancer toutes les requêtes en parallèle avec un délai pour éviter les limitations de l'API
-      for (let i = 0; i < FIELDS.length; i++) {
-        const field = FIELDS[i];
-        
-        // Attendre un peu entre chaque requête pour éviter de surcharger l'API
-        if (i > 0) {
-          await new Promise(resolve => setTimeout(resolve, 1000));
-        }
-        
-        // Ne pas attendre que la requête soit terminée pour passer à la suivante
-        fetchField(q, field).catch(e => {
-          console.error(`Erreur lors de la récupération du champ ${field}:`, e);
-          setError(prev => prev || `Erreur: ${e instanceof Error ? e.message : 'Erreur inconnue'}`);
-        });
+      // Mettre à jour le compteur de requêtes si l'utilisateur est connecté
+      if (user?.id) {
+        await updateDailyRequests(user.id);
+      } else if (!DEBUG) {
+        localStorage.setItem('lastRequest', Date.now().toString());
       }
 
-      // Mettre à jour les compteurs
-      if (user) {
-        const today = new Date().toISOString().split('T')[0];
-        const newCount = requestsToday + 1;
-        setRequestsToday(newCount);
-        localStorage.setItem(`requests_${today}`, newCount.toString());
-      } else {
-        localStorage.setItem('lastRequest', Date.now().toString());
-        setTimeLeft(300); // 5 minutes en secondes
+      let historyId: string | null = null;
+      
+      if (user?.id) {
+        console.log('=== Création de l\'entrée historique ===');
+        console.log('User ID:', user.id);
+        
+        const historyData = {
+          user_id: user.id,
+          query: q,
+          created_at: new Date().toISOString()
+        };
+
+        try {
+          const { data, error: historyError } = await insertSearchHistory(historyData);
+
+          if (historyError) {
+            console.error('Erreur lors de la création de l\'historique:', historyError);
+            throw historyError;
+          }
+          if (data) {
+            historyId = data.id;
+            console.log('ID historique créé:', historyId);
+          }
+          
+        } catch (e) {
+          console.error('Exception lors de la création historique:', e);
+        }
       }
-    } catch (e: unknown) {
-      console.error("Erreur globale:", e);
+
+      const allResults: Record<string, any> = { query: q };
+      const localResults: Record<string, any> = {};
+      
+      console.log('=== Début de la récupération des champs ===');
+      
+      for (const field of FIELDS) {
+        try {
+          console.log(`Récupération du champ "${field}"...`);
+          abortControllersRef.current[field] = new AbortController();
+          
+          const success = await fetchField(
+            q,
+            field,
+            abortControllersRef.current[field],
+            (newResult: ApiResponse | ((prev: ApiResponse) => ApiResponse)) => {
+              if (typeof newResult === 'function') {
+                setSearchResult(prev => {
+                  const updatedResult = newResult(prev);
+                  localResults[field] = updatedResult[field];
+                  return updatedResult;
+                });
+              } else {
+                localResults[field] = newResult[field];
+                setSearchResult(prev => ({ ...prev, [field]: newResult[field] }));
+              }
+            },
+            setLoadedFields
+          );
+
+          if (success && localResults[field]) {
+            console.log(`Champ "${field}" récupéré avec succès:`, localResults[field]);
+            allResults[field] = localResults[field];
+            
+            // Sauvegarder chaque champ individuellement
+            if (user?.id && historyId) {
+              console.log(`Sauvegarde du champ "${field}"...`);
+              
+              // Formater les données avant la sauvegarde
+              const fieldData = {
+                query: q,
+                user_id: user.id,
+                [field]: localResults[field]
+              };
+
+              // Pour les champs spéciaux qui nécessitent une conversion
+              if (field === 'exposition' && typeof fieldData.exposition === 'object') {
+                fieldData.exposition = JSON.stringify(fieldData.exposition);
+              }
+              if (field === 'sources' && Array.isArray(fieldData.sources)) {
+                fieldData.sources = JSON.stringify(fieldData.sources);
+              }
+              if (field === 'images' && Array.isArray(fieldData.images)) {
+                fieldData.images = JSON.stringify(fieldData.images);
+              }
+              if (field === 'keywords' && Array.isArray(fieldData.keywords)) {
+                fieldData.keywords = JSON.stringify(fieldData.keywords);
+              }
+
+              console.log(`Données formatées pour le champ "${field}":`, fieldData);
+              
+              const saveSuccess = await saveSearchHistory(
+                historyId,
+                fieldData,
+                setError
+              );
+              console.log(`Sauvegarde du champ "${field}":`, saveSuccess ? 'Succès' : 'Échec');
+            }
+          }
+        } catch (e) {
+          console.error(`Erreur lors de la récupération du champ "${field}":`, e);
+        }
+        
+        // Mettre à jour la progression
+        setProgress((FIELDS.indexOf(field) + 1) / FIELDS.length * 100);
+      }
+      
+      console.log('=== Tous les champs ont été récupérés ===');
+      console.log('Résultats finaux:', allResults);
+
+    } catch (e) {
+      console.error('=== Erreur globale ===');
+      console.error('Type:', e instanceof Error ? 'Error' : typeof e);
+      console.error('Message:', e instanceof Error ? e.message : String(e));
+      console.error('Stack:', e instanceof Error ? e.stack : 'Non disponible');
       setError(`Erreur: ${e instanceof Error ? e.message : 'Erreur inconnue'}`);
+    } finally {
       setIsLoading(false);
     }
   };
@@ -224,19 +322,11 @@ export default function Home() {
     const totalFields = FIELDS.length;
     const loadedCount = Object.values(loadedFields).filter(Boolean).length;
     const progressValue = (loadedCount / totalFields) * 100;
-    
-    console.log(`Progression: ${loadedCount}/${totalFields} (${progressValue.toFixed(0)}%)`);
     setProgress(progressValue);
-    
-    if (loadedCount === totalFields) {
-      console.log('Tous les champs sont chargés, fin du chargement');
-      setIsLoading(false);
-    }
   }, [loadedFields]);
 
   useEffect(() => {
     return () => {
-      // Nettoyer les requêtes en cours lors du démontage du composant
       Object.values(abortControllersRef.current).forEach(controller => {
         try {
           controller.abort();
@@ -246,41 +336,6 @@ export default function Home() {
       });
     };
   }, []);
-  
-  // Composant pour les indicateurs de champs
-  const FieldIndicators = () => (
-    <div className="flex flex-wrap gap-2 mt-4">
-      {[
-        { key: 'title', label: 'Titre', icon: '📝' },
-        { key: 'summary', label: 'Résumé', icon: '📋' },
-        { key: 'historicalContext', label: 'Contexte', icon: '🏛️' },
-        { key: 'anecdote', label: 'Anecdote', icon: '💡' },
-        { key: 'exposition', label: 'Exposé', icon: '📚' },
-        { key: 'sources', label: 'Sources', icon: '🔗' },
-        { key: 'images', label: 'Images', icon: '🖼️' },
-        { key: 'keywords', label: 'Mots-clés', icon: '🏷️' }
-      ].map(field => (
-        <span 
-          key={field.key} 
-          className={`
-            text-sm px-3 py-1 rounded-full flex items-center gap-1
-            ${loadedFields[field.key] 
-              ? 'bg-green-100 text-green-800 border border-green-300' 
-              : 'bg-gray-100 text-gray-500 border border-gray-200'
-            }
-            transition-all duration-300
-          `}
-          title={loadedFields[field.key] ? "Contenu généré" : "En attente de génération"}
-        >
-          <span>{field.icon}</span>
-          <span>{field.label}</span>
-          {loadedFields[field.key] && (
-            <span className="text-green-600">✓</span>
-          )}
-        </span>
-      ))}
-    </div>
-  );
 
   return (
     <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-12">
@@ -338,7 +393,10 @@ export default function Home() {
               </button>
             </div>
             
-            <FieldIndicators />
+            <FieldIndicators 
+              loadedFields={loadedFields}
+              isLoading={isLoading}
+            />
             
             {isLoading && (
               <div className="w-full bg-gray-200 rounded-full h-2.5 mt-4">
