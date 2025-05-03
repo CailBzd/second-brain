@@ -26,6 +26,18 @@ export default function Footer() {
             >
               Confidentialité
             </Link>
+            <Link
+              href="/help"
+              className="text-gray-400 hover:text-white transition-colors text-sm"
+            >
+              Aide
+            </Link>
+            <Link
+              href="/terms"
+              className="text-gray-400 hover:text-white transition-colors text-sm"
+            >
+              Conditions d'utilisation
+            </Link>
           </div>
         </div>
       </div>
