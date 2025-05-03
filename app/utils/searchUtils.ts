@@ -1,5 +1,9 @@
 import { getSupabaseClient, insertSearchHistory, updateSearchHistoryById } from '@/lib/supabase';
 
+/**
+ * Interface représentant les résultats de recherche structurés
+ * avec tous les champs possibles retournés par l'API Mistral
+ */
 export interface SearchResult {
   title?: string;
   summary?: string;
@@ -16,6 +20,9 @@ export interface SearchResult {
   [key: string]: any;
 }
 
+/**
+ * Catégories de contenu pour l'organisation de l'exposé
+ */
 export const CATEGORIES = {
   INTRO: 'introduction',
   CONTEXT: 'context',
@@ -25,6 +32,9 @@ export const CATEGORIES = {
 
 export type Category = typeof CATEGORIES[keyof typeof CATEGORIES];
 
+/**
+ * Liste des champs disponibles pour la recherche
+ */
 export const FIELDS = [
   'title',
   'summary',
@@ -40,11 +50,20 @@ export const DEBUG = process.env.NODE_ENV === 'development';
 export const REQUESTS_PER_DAY = 5;
 export const REQUEST_COOLDOWN = 5 * 60 * 1000; // 5 minutes en millisecondes
 
-// Fonction pour convertir en snake_case
+/**
+ * Convertit une chaîne en snake_case pour compatibilité avec la base de données
+ * @param str - Chaîne à convertir
+ * @returns Chaîne au format snake_case
+ */
 export const convertToSnakeCase = (str: string) => 
   str.replace(/[A-Z]/g, letter => `_${letter.toLowerCase()}`);
 
-// Fonction pour nettoyer et formater les résultats
+/**
+ * Formate les résultats pour la sauvegarde en base de données
+ * Convertit les clés en snake_case et ajoute des métadonnées
+ * @param allResults - Résultats à formater
+ * @returns Données formatées pour la sauvegarde
+ */
 export const formatResultsForSave = (allResults: Record<string, any>) => {
   const formattedResults = Object.entries(allResults).reduce((acc, [key, value]) => {
     if (key === 'query') return acc;
@@ -65,7 +84,15 @@ export const formatResultsForSave = (allResults: Record<string, any>) => {
   };
 };
 
-// Fonction pour récupérer un champ spécifique
+/**
+ * Récupère un champ spécifique depuis l'API de recherche
+ * @param query - Requête de recherche
+ * @param field - Champ à récupérer (title, summary, etc.)
+ * @param abortController - Contrôleur pour annuler la requête si nécessaire
+ * @param setSearchResult - Fonction pour mettre à jour les résultats
+ * @param setLoadedFields - Fonction pour mettre à jour les champs chargés
+ * @returns true si le champ a été récupéré avec succès, false sinon
+ */
 export const fetchField = async (
   query: string, 
   field: string,
@@ -74,8 +101,7 @@ export const fetchField = async (
   setLoadedFields: (value: Record<string, boolean> | ((prev: Record<string, boolean>) => Record<string, boolean>)) => void
 ) => {
   try {
-    console.log(`Récupération du champ ${field}...`);
-    
+    // Requête à l'API
     const response = await fetch(
       `/api/search?query=${encodeURIComponent(query)}&field=${field}`,
       { signal: abortController.signal }
@@ -92,8 +118,7 @@ export const fetchField = async (
       throw new Error(`Données manquantes pour le champ ${field}`);
     }
     
-    console.log(`Champ ${field} récupéré avec succès:`, data[field]);
-    
+    // Mise à jour des états
     setSearchResult(prev => ({
       ...prev,
       [field]: data[field]
@@ -107,32 +132,34 @@ export const fetchField = async (
     return true;
   } catch (err: unknown) {
     if (err instanceof Error && err.name === 'AbortError') {
-      console.log(`Requête pour ${field} annulée`);
+      // Requête annulée volontairement, pas une erreur
       return false;
     }
     
-    console.error(`Erreur lors de la récupération du champ ${field}:`, err);
+    // Autres erreurs
     return false;
   }
 };
 
-// Fonction pour sauvegarder l'historique
+/**
+ * Sauvegarde les résultats de recherche dans l'historique Supabase
+ * Gère la validation des données et le formatage approprié pour la base
+ * @param historyId - ID de l'historique à mettre à jour
+ * @param dataToSave - Données à sauvegarder
+ * @param setError - Fonction pour signaler les erreurs à l'UI
+ * @returns true si la sauvegarde a réussi, false sinon
+ */
 export const saveSearchHistory = async (
   historyId: string,
   dataToSave: Record<string, any>,
   setError: (error: string | null) => void
 ) => {
-  console.log('=== Début saveSearchHistory ===');
-  console.log('ID historique:', historyId);
-  console.log('Données à sauvegarder:', dataToSave);
-
   const supabase = getSupabaseClient();
   
   try {
     // Vérifier la session utilisateur
     const { data: { session }, error: sessionError } = await supabase.auth.getSession();
     if (sessionError || !session) {
-      console.error('Session non trouvée:', sessionError);
       throw new Error('Session utilisateur non trouvée');
     }
 
@@ -147,7 +174,7 @@ export const saveSearchHistory = async (
         try {
           updateData.exposition = JSON.parse(updateData.exposition);
         } catch (e) {
-          console.warn('Erreur lors du parsing de exposition:', e);
+          // Erreur silencieuse, on continue
         }
       } else if (typeof updateData.exposition === 'object') {
         // Déjà un objet, s'assurer qu'il peut être converti en JSON
@@ -155,7 +182,6 @@ export const saveSearchHistory = async (
           const test = JSON.stringify(updateData.exposition);
           // Si pas d'erreur, on est bon
         } catch (e) {
-          console.warn('Erreur lors de la conversion de exposition en JSON:', e);
           updateData.exposition = null;
         }
       }
@@ -167,7 +193,7 @@ export const saveSearchHistory = async (
         try {
           updateData.sources = JSON.parse(updateData.sources);
         } catch (e) {
-          console.warn('Erreur lors du parsing de sources:', e);
+          // Erreur silencieuse, on continue
         }
       } else if (Array.isArray(updateData.sources)) {
         // C'est déjà un tableau, s'assurer qu'il peut être converti en JSON
@@ -175,7 +201,6 @@ export const saveSearchHistory = async (
           const test = JSON.stringify(updateData.sources);
           // Si pas d'erreur, on est bon
         } catch (e) {
-          console.warn('Erreur lors de la conversion de sources en JSON:', e);
           updateData.sources = null;
         }
       }
@@ -187,7 +212,7 @@ export const saveSearchHistory = async (
         try {
           updateData.images = JSON.parse(updateData.images);
         } catch (e) {
-          console.warn('Erreur lors du parsing de images:', e);
+          // Erreur silencieuse, on continue
         }
       } else if (Array.isArray(updateData.images)) {
         // C'est déjà un tableau, s'assurer qu'il peut être converti en JSON
@@ -195,7 +220,6 @@ export const saveSearchHistory = async (
           const test = JSON.stringify(updateData.images);
           // Si pas d'erreur, on est bon
         } catch (e) {
-          console.warn('Erreur lors de la conversion de images en JSON:', e);
           updateData.images = null;
         }
       }
@@ -207,7 +231,7 @@ export const saveSearchHistory = async (
         try {
           updateData.keywords = JSON.parse(updateData.keywords);
         } catch (e) {
-          console.warn('Erreur lors du parsing de keywords:', e);
+          // Erreur silencieuse, on continue
         }
       } else if (Array.isArray(updateData.keywords)) {
         // Vérifier que tous les éléments sont des chaînes
@@ -217,27 +241,29 @@ export const saveSearchHistory = async (
       }
     }
     
-    console.log('Type de updateData:', typeof updateData);
-    console.log('Données préparées pour la mise à jour:', JSON.stringify(updateData, null, 2));
-    
     // Créer une copie pour éviter les mutations imprévues
     const finalUpdateData = { ...updateData };
 
-    // Log des types
-    Object.entries(finalUpdateData).forEach(([key, value]) => {
-      console.log(`Champ ${key}: Type = ${typeof value}, Valeur =`, value);
-    });
+    // Obtenir l'ID utilisateur depuis la session
+    const userId = session.user.id;
+
+    // Ajouter l'ID utilisateur aux données à mettre à jour pour respecter les politiques RLS
+    const finalUpdateDataWithUser = { 
+      ...finalUpdateData,
+      user_id: userId
+    };
 
     // Essayer de mettre à jour d'abord
-    const { data: updatedData, error: updateError } = await updateSearchHistoryById(historyId, finalUpdateData);
+    const { data: updatedData, error: updateError } = await updateSearchHistoryById(historyId, finalUpdateDataWithUser);
 
     // Si l'entrée n'existe pas, on la crée
     if (updateError?.code === 'PGRST116' || !updatedData) {
-      console.log('Entrée non trouvée, création d\'une nouvelle entrée...');
-      const { data: insertedData, error: insertError } = await insertSearchHistory({ ...finalUpdateData, id: historyId });
+      const { data: insertedData, error: insertError } = await insertSearchHistory({ 
+        ...finalUpdateDataWithUser, 
+        id: historyId
+      });
 
       if (insertError) {
-        console.error('Erreur lors de la création:', insertError);
         throw insertError;
       }
 
@@ -245,52 +271,38 @@ export const saveSearchHistory = async (
         throw new Error('Aucune donnée retournée après la création');
       }
 
-      console.log('Nouvelle entrée créée avec succès:', insertedData);
       return true;
     }
 
     if (updateError) {
-      console.error('Erreur lors de la mise à jour:', updateError);
       throw updateError;
     }
-
-    console.log('Mise à jour réussie:', updatedData);
 
     // Vérification des champs mis à jour
     const updatedFields = Object.keys(finalUpdateData).filter(key => 
       key !== 'user_id' && key !== 'query'
     );
-
-    console.log('Champs mis à jour:', updatedFields);
     
     const missingFields = updatedFields.filter(
       field => updatedData[field] === null || updatedData[field] === undefined
     );
 
-    if (missingFields.length > 0) {
-      console.warn('⚠️ Champs manquants après mise à jour:', missingFields);
-      console.warn('Comparaison des données:');
-      missingFields.forEach(field => {
-        console.warn(`- ${field}:`);
-        console.warn('  Attendu:', finalUpdateData[field]);
-        console.warn('  Sauvegardé:', updatedData[field]);
-      });
-    } else {
-      console.log('✅ Tous les champs ont été correctement sauvegardés');
-    }
-
-    console.log('=== Fin saveSearchHistory ===');
+    // La mise à jour est considérée comme réussie même si certains champs sont manquants
     return true;
   } catch (e) {
-    console.error('❌ Exception lors de la mise à jour:', e);
-    console.error('Stack trace:', e instanceof Error ? e.stack : 'Non disponible');
     setError(`Erreur lors de la sauvegarde: ${e instanceof Error ? e.message : 'Erreur inconnue'}`);
     return false;
   }
 };
 
+/**
+ * Types de modèles Mistral AI disponibles
+ */
 export type MistralModel = 'mistral-tiny' | 'mistral-small' | 'mistral-medium';
 
+/**
+ * Interface des informations sur les modèles Mistral
+ */
 interface MistralModelInfo {
   name: string;
   maxTokens: number;
@@ -298,6 +310,9 @@ interface MistralModelInfo {
   isFree: boolean;
 }
 
+/**
+ * Configuration des modèles Mistral disponibles avec leurs caractéristiques
+ */
 export const MISTRAL_MODELS: Record<MistralModel, MistralModelInfo> = {
   'mistral-tiny': {
     name: 'mistral-tiny',

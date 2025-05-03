@@ -19,11 +19,28 @@ export async function insertSearchHistory(data: any) {
 }
 
 export async function updateSearchHistoryById(id: string, data: any) {
-  return await supabase.from('search_history').update(data).eq('id', id).select().maybeSingle();
+  // Utiliser upsert au lieu de update pour éviter les erreurs de clé dupliquée
+  const dataWithId = { ...data, id };
+  return await upsertSearchHistory(dataWithId);
+}
+
+export async function upsertSearchHistory(data: any) {
+  return await supabase
+    .from('search_history')
+    .upsert(data, {
+      onConflict: 'id',
+      ignoreDuplicates: false
+    })
+    .select()
+    .maybeSingle();
 }
 
 export async function selectSearchHistoryByUser(user_id: string) {
-  return await supabase.from('search_history').select('*').eq('user_id', user_id).order('created_at', { ascending: false });
+  return await supabase
+    .from('search_history')
+    .select('*')
+    .eq('user_id', user_id)
+    .order('created_at', { ascending: false });
 }
 
 export async function deleteSearchHistoryById(id: string) {
@@ -40,7 +57,12 @@ export async function updateDailyRequestById(id: string, data: any) {
 }
 
 export async function selectDailyRequestByUserAndDate(user_id: string, request_date: string) {
-  return await supabase.from('daily_requests').select('*').eq('user_id', user_id).eq('request_date', request_date).maybeSingle();
+  return await supabase
+    .from('daily_requests')
+    .select('*')
+    .eq('user_id', user_id)
+    .eq('request_date', request_date)
+    .maybeSingle();
 }
 
 export async function deleteDailyRequestById(id: string) {

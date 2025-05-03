@@ -38,6 +38,61 @@ Second Brain est une application web développée avec Next.js qui utilise l'API
 - **Tailwind CSS** - Styling
 - **Mistral AI** - Intelligence artificielle
 - **Radix UI** - Composants d'interface
+- **Supabase** - Base de données et authentification
+
+## Structure du Code
+
+L'application est organisée selon l'architecture suivante:
+
+### Couche de Base de Données (lib/)
+- **lib/supabase.ts** - Client Supabase et fonctions d'accès à la base de données
+  - Contient les fonctions CRUD pour les tables `search_history` et `daily_requests`
+  - Utilise la méthode `upsert` pour éviter les erreurs de clés dupliquées
+
+### Utilitaires (app/utils/)
+- **app/utils/searchUtils.ts** - Fonctions utilitaires pour la recherche
+  - Définit les interfaces et types communs
+  - Contient les fonctions de formatage et de traitement des données
+  - Gère la sauvegarde des résultats de recherche
+
+### API (app/api/)
+- **app/api/search/route.ts** - API REST pour la recherche
+  - Communique avec Mistral AI pour générer des résultats
+  - Traite les résultats bruts et les structure
+  - Sauvegarde les résultats dans Supabase
+
+- **app/api/history/route.ts** - API REST pour l'historique
+  - Récupère, supprime et gère les entrées d'historique
+
+### Composants d'Interface (app/components/, components/)
+- Composants réutilisables pour l'interface utilisateur
+- Formulaires, cartes, boutons et autres éléments d'UI
+
+### Pages (app/)
+- **app/page.tsx** - Page d'accueil/recherche
+  - Formulaire de recherche
+  - Affichage des résultats
+  - Gestion des quotas d'utilisation
+
+- **app/history/page.tsx** - Page d'historique
+  - Affichage et gestion des recherches précédentes
+
+### Flux de Données
+
+1. L'utilisateur soumet une requête via le formulaire de recherche
+2. Le serveur vérifie les quotas et limites d'utilisation
+3. Pour chaque champ requis (titre, résumé, etc.):
+   - L'API envoie un prompt spécifique à Mistral AI
+   - Les résultats sont analysés et structurés
+   - Les données sont sauvegardées dans Supabase
+4. Les résultats sont affichés à l'utilisateur
+5. L'historique est mis à jour pour référence future
+
+### Sécurité
+
+- Authentification gérée par Supabase
+- Row-Level Security (RLS) pour limiter l'accès aux données
+- Chaque utilisateur ne peut voir et modifier que ses propres recherches
 
 ## Installation
 
@@ -55,6 +110,8 @@ npm install
 3. Créez un fichier `.env.local` à la racine du projet et ajoutez votre clé API Mistral :
 ```
 MISTRAL_API_KEY=votre_clé_api
+NEXT_PUBLIC_SUPABASE_URL=votre_url_supabase
+NEXT_PUBLIC_SUPABASE_ANON_KEY=votre_clé_supabase_anon
 ```
 
 4. Lancez le serveur de développement :
